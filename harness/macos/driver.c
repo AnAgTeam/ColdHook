@@ -3,6 +3,7 @@
 // Путь к dylib — аргумент: ./driver <path-to-dylib>
 #include <dlfcn.h>
 #include <stdio.h>
+#include <unistd.h>
 
 typedef const char *(*domain_for_t)(int);
 
@@ -27,6 +28,20 @@ int main(int argc, char **argv)
         printf("[driver] target_health() = %d (импорт A _getpid)\n", pid);
         if (pid <= 0) {
             fprintf(stderr, "[driver] импорт A вернул мусор -> бинд сломан\n");
+            return 1;
+        }
+    }
+
+    // Проверка внешнего импорта B (_getppid): хук возвращает свой getppid(),
+    // сравниваем с нашим — один процесс, значения обязаны совпасть.
+    int (*hppid)(void) = (int (*)(void))dlsym(h, "hook_ppid");
+    if (hppid) {
+        int from_hook = hppid();
+        int real = (int)getppid();
+        printf("[driver] hook getppid()=%d, наш getppid()=%d -> %s\n",
+               from_hook, real, (from_hook == real) ? "СОВПАЛО" : "РАСХОЖДЕНИЕ!");
+        if (from_hook != real) {
+            fprintf(stderr, "[driver] импорт B _getppid резолвится неверно\n");
             return 1;
         }
     }
