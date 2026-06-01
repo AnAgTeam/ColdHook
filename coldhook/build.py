@@ -12,6 +12,9 @@ C_CYAN, C_RED, C_GREEN, C_YELL, C_RST = (
     "\033[1;36m", "\033[1;31m", "\033[1;32m", "\033[1;33m", "\033[0m")
 
 
+INCLUDE_DIR = os.path.join(os.path.dirname(__file__), "include")  # где лежит coldhook.h
+
+
 def _say(msg: str) -> None:
     print(f"{C_CYAN}== {msg}{C_RST}")
 
@@ -25,8 +28,10 @@ def _build_or_get_hook(target: Target, info: macho.MachOInfo, tmp: str) -> str:
     if target.sources:
         hook = os.path.join(tmp, "libhook.dylib")
         _say(f"[{target.name}] собираю хук под {info.arch}/{info.platform or 'macos'}")
+        # -I с coldhook.h, чтобы исходники могли #include <coldhook.h> (HOOK_ADDR/ORIG)
         toolchain.build_hook(target.sources, hook, info.arch,
-                             info.platform or "macos", info.minos)
+                             info.platform or "macos", info.minos,
+                             extra=["-I", INCLUDE_DIR])
         return hook
     hook = target.dylib
     _say(f"[{target.name}] готовый хук: {os.path.basename(hook)}")
