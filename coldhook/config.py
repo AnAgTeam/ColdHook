@@ -25,6 +25,8 @@ class Target:
     sources: list[str] = field(default_factory=list)  # исходники хука (абс)
     dylib: str | None = None       # ИЛИ готовый хук-dylib (абс)
     out: str | None = None         # куда писать (patch-режим; абс)
+    ldflags: list[str] = field(default_factory=list)  # доп. флаги линковки хука (напр. -lz)
+    allow_new_dylibs: bool = False  # разрешить B тянуть dylib, которых нет в таргете
 
 
 @dataclass
@@ -69,6 +71,8 @@ def load(path: str) -> Config:
             sources=[_abs(base, x) for x in t.get("sources", [])],
             dylib=_abs(base, t.get("dylib")),
             out=_abs(base, t.get("out")),
+            ldflags=list(t.get("ldflags", [])),
+            allow_new_dylibs=bool(t.get("allow_new_dylibs", False)),
         )
         if not tgt.sources and not tgt.dylib:
             raise ValueError(f"target '{name}': нужен 'sources' или 'dylib'")

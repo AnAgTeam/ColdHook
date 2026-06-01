@@ -29,10 +29,10 @@ def _build_or_get_hook(target: Target, info: macho.MachOInfo, workdir: str) -> s
         os.makedirs(workdir, exist_ok=True)
         hook = os.path.join(workdir, "libhook.dylib")
         _say(f"[{target.name}] собираю хук под {info.arch}/{info.platform or 'macos'}")
-        # -I с coldhook.h, чтобы исходники могли #include <coldhook.h> (HOOK_ADDR/ORIG)
+        # -I с coldhook.h (HOOK_ADDR/ORIG) + пользовательские ldflags (напр. -lz)
         toolchain.build_hook(target.sources, hook, info.arch,
                              info.platform or "macos", info.minos,
-                             extra=["-I", INCLUDE_DIR])
+                             extra=["-I", INCLUDE_DIR, *target.ldflags])
         return hook
     hook = target.dylib
     _say(f"[{target.name}] готовый хук: {os.path.basename(hook)}")
@@ -48,7 +48,7 @@ def _merge_thin(target: Target, info_thin: macho.MachOInfo, binary_thin: str,
         raise PatchError(f"[{target.name}] слайс {info_thin.arch} зашифрован "
                          f"(cryptid={info_thin.cryptid}); нужен расшифрованный дамп")
     hook = _build_or_get_hook(target, info_thin, workdir)
-    toolchain.merge(binary_thin, hook, out_thin)
+    toolchain.merge(binary_thin, hook, out_thin, allow_new_dylibs=target.allow_new_dylibs)
 
 
 def _patch_fat(target: Target, info: macho.MachOInfo, binary: str,

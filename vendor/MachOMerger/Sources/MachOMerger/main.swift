@@ -15,13 +15,19 @@ let pageSize: UInt64    = 0x4000
 let pageMaskOff: UInt64 = pageSize - 1
 let pageMask: UInt64    = ~pageMaskOff
 
-guard CommandLine.arguments.count == 4 else {
-    print("Usage: MachOMerger <a> <b> <out>")
+// ColdHook: --allow-new-dylibs разрешает B тянуть dylib, которых нет в таргете A
+// (мёрджер допишет их LC_LOAD_DYLIB). По умолчанию выключено — чужой импорт = ошибка.
+let coldhookAllowNewDylibs = CommandLine.arguments.contains("--allow-new-dylibs")
+var coldhookNewDylibCmds: [Data] = []   // сырые LC_LOAD_DYLIB для дозаписи (заполняет merge)
+
+let coldhookPosArgs = CommandLine.arguments.dropFirst().filter { !$0.hasPrefix("--") }
+guard coldhookPosArgs.count == 3 else {
+    print("Usage: MachOMerger <a> <b> <out> [--allow-new-dylibs]")
     exit(-1)
 }
 
-let a = try MachO(fromFile: CommandLine.arguments[1], okToLoadFAT: false)
-let b = try MachO(fromFile: CommandLine.arguments[2], okToLoadFAT: false)
+let a = try MachO(fromFile: coldhookPosArgs[0], okToLoadFAT: false)
+let b = try MachO(fromFile: coldhookPosArgs[1], okToLoadFAT: false)
 
 var newMachO = Data()
 
@@ -480,6 +486,14 @@ for other in dataA.otherCommands {
     }
 }
 
+// ColdHook: дозаписать LC_LOAD_DYLIB для dylib хука B, которых не было в таргете A
+// (--allow-new-dylibs). Идут ПОСЛЕ dylib A, поэтому их ordinals = aDylibs.count+1.. —
+// ровно как назначено в mapExternalImport.
+for cmdData in coldhookNewDylibCmds {
+    loadCommands += cmdData
+    loadCommandsCount += 1
+}
+
 let lastSegments = relocInfo.segRel.last!
 let lastSegment = (lastSegments.1.count == 1) ? lastSegments.1[0] : lastSegments.1[1]
 var linkeditLC = segment_command_64()
@@ -522,7 +536,7 @@ machOHdr.append(Data(repeating: 0, count: 0x4000 - machOHdr.count))
 
 var out = machOHdr + machOData + linkedit
 
-try out.write(to: URL(fileURLWithPath: CommandLine.arguments[3]))
+try out.write(to: URL(fileURLWithPath: coldhookPosArgs[2]))
 
 /*let resMachO = try MachO(out)
 

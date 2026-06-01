@@ -36,7 +36,8 @@ def cmd_merge(args) -> int:
         print("нужен хук: --src <файл> (повторяемо) или --dylib <готовый>", file=sys.stderr)
         return 2
     target = Target(name=args.name or "merge", binary=args.target,
-                    sources=args.src or [], dylib=args.dylib, out=args.out)
+                    sources=args.src or [], dylib=args.dylib, out=args.out,
+                    ldflags=args.ldflags or [], allow_new_dylibs=args.allow_new_dylibs)
     signing = Signing(identity=args.sign, entitlements=args.ent, use_ldid=args.ldid)
     out = args.out or (args.target + ".coldhook")
     patch_target(target, signing, args.target, out, do_sign=not args.no_sign)
@@ -74,6 +75,10 @@ def build_parser() -> argparse.ArgumentParser:
     pm.add_argument("--dylib", metavar="FILE", help="готовый хук-dylib (вместо --src)")
     pm.add_argument("--out", help="путь результата (по умолч. <target>.coldhook)")
     pm.add_argument("--name", help="метка для логов")
+    pm.add_argument("--ldflags", action="append", metavar="FLAG",
+                    help="доп. флаг линковки хука, напр. -lz (повторяемо)")
+    pm.add_argument("--allow-new-dylibs", action="store_true",
+                    help="разрешить хуку тянуть dylib, которых нет в таргете")
     pm.add_argument("--no-sign", action="store_true", help="не подписывать результат")
     _add_sign_args(pm)
     pm.set_defaults(func=cmd_merge)

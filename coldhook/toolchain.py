@@ -79,8 +79,11 @@ def build_hook(sources: list[str], out: str, arch: str, platform: str, minos: st
     _run(hook_clang_cmd(sources, out, arch, platform, minos, extra=extra), "сборка хука")
 
 
-def merge(target: str, hook: str, out: str) -> None:
-    _run([ensure_merger(), target, hook, out], "merge")
+def merge(target: str, hook: str, out: str, allow_new_dylibs: bool = False) -> None:
+    cmd = [ensure_merger(), target, hook, out]
+    if allow_new_dylibs:
+        cmd.append("--allow-new-dylibs")
+    _run(cmd, "merge")
 
 
 def sign(path: str, identity: str = "-", entitlements: str | None = None,
