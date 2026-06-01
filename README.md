@@ -20,10 +20,29 @@ coldhook/             Python-оркестратор (info | merge | patch | ipa)
 # сборка движка (один раз)
 cd vendor/MachOMerger && swift build -c release && cd -
 
-python3 harness/macos/run.py         # merge + Replace + ORIG + импорты A/B (dylib)
-python3 harness/macos/run_offset.py  # хук по сырому оффсету (без символа)
-python3 harness/macos/run_app.py     # полный .app: собрать -> coldhook ipa -> запустить
+python3 harness/macos/run.py           # merge + Replace + ORIG + импорты A/B (dylib)
+python3 harness/macos/run_offset.py    # хук по сырому оффсету (магик-символ вручную)
+python3 harness/macos/run_hookaddr.py  # by-offset через макрос HOOK_ADDR + coldhook merge
+python3 harness/macos/run_app.py       # полный .app: собрать -> coldhook ipa -> запустить
 ```
+
+### Хуки по оффсету в коде (`HOOK_ADDR`)
+
+Для стрипнутых бинарей — обычная функция + `HOOK_ADDR(offset, fn)` (из `<coldhook.h>`);
+оффсет = оригинальный vmaddr цели (как в IDA). Магик-символы/ORIG-трамплины генерит макрос.
+
+```c
+#include <coldhook.h>
+COLDHOOK_ORIG(fix_domain, const char *, int);
+const char *fix_domain(int env) {
+    if (env == 99) return "https://fallback";   // чиним провал
+    return ORIG(fix_domain)(env);                // остальное -> в оригинал
+}
+HOOK_ADDR(0xb99a8, fix_domain);
+```
+
+Конфиг для такого таргета — просто `binary` + `sources` (оффсеты живут в коде). Строка-модуль
+`HOOK_ADDR("Bin", off, fn)` зарезервирована под будущий shared-режим (одна либа на много бинарей).
 
 Паттерн цели: `domain_for(env)` отдаёт домен для известного окружения, иначе падает
 в `__builtin_trap()` (модель `assertionFailure`). Хук чинит провальный путь, известное
@@ -51,7 +70,7 @@ python3 -m coldhook ipa    <in.ipa|.app> -c cfg -o <out>       # merge в бан
 - [x] M1: parse + merge + Replace-хук по символу + codesign + загрузка (локально, macOS)
 - [x] Merge импортов таргета A (Step 1) + внешних импортов B (Step 2), dual-format (arm64 2/6, arm64e 1/12)
 - [x] Detour-режим (`ORIG`/возврат в оригинал, single-instruction трамплин)
-- [x] Хук по оффсету (`COLDHOOK_ADDR_<hex>`, для стрипнутых бинарей)
+- [x] Хук по оффсету: магик-символ `COLDHOOK_ADDR_<hex>` + макрос `HOOK_ADDR(off, fn)` в коде
 - [x] Python-оркестратор: `info | merge | patch`
 - [x] Патч бандла `ipa` (.ipa/.app, merge in-place, без подписи) + macOS .app полигон
 - [ ] Подпись бандла под TrollStore/dev-серт (resign .app, порядок вложенности)

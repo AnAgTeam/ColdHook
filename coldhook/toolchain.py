@@ -43,11 +43,12 @@ def _sdk_path(sdk: str) -> str:
 
 
 def hook_clang_cmd(sources: list[str], out: str, arch: str,
-                   platform: str, minos: str) -> list[str]:
+                   platform: str, minos: str, extra: list[str] | None = None) -> list[str]:
     """Команда сборки хук-dylib под арку/платформу таргета.
 
     Платформа важна: хук должен линковать те же пути dylib, что и таргет, иначе
     ремап dylib-ordinals при merge внешних импортов B не найдёт совпадения.
+    `extra` — доп. флаги (напр. -I с каталогом coldhook.h), вставляются до исходников.
     """
     arch = arch or "arm64"
     platform = platform or "macos"
@@ -66,13 +67,16 @@ def hook_clang_cmd(sources: list[str], out: str, arch: str,
         # tvos/watchos и пр. — пробуем через -target без явного sysroot
         cmd += ["-target", f"{arch}-apple-{platform}{minos}"]
 
+    if extra:
+        cmd += list(extra)
     cmd += list(sources)
     return cmd
 
 
-def build_hook(sources: list[str], out: str, arch: str, platform: str, minos: str) -> None:
+def build_hook(sources: list[str], out: str, arch: str, platform: str, minos: str,
+               extra: list[str] | None = None) -> None:
     os.makedirs(os.path.dirname(os.path.abspath(out)) or ".", exist_ok=True)
-    _run(hook_clang_cmd(sources, out, arch, platform, minos), "сборка хука")
+    _run(hook_clang_cmd(sources, out, arch, platform, minos, extra=extra), "сборка хука")
 
 
 def merge(target: str, hook: str, out: str) -> None:
