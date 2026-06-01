@@ -1,0 +1,13 @@
+# Swift build output (MachOMerger)
+.build/
+vendor/MachOMerger/.build/
+
+# Локальные сборки харнесса
+harness/macos/build/
+
+# Python
+__pycache__/
+*.pyc
+
+# macOS
+.DS_Store
