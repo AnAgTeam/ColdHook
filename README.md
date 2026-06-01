@@ -23,6 +23,7 @@ cd vendor/MachOMerger && swift build -c release && cd -
 python3 harness/macos/run.py           # merge + Replace + ORIG + импорты A/B (dylib)
 python3 harness/macos/run_offset.py    # хук по сырому оффсету (магик-символ вручную)
 python3 harness/macos/run_hookaddr.py  # by-offset через макрос HOOK_ADDR + coldhook merge
+python3 harness/macos/run_fat.py       # FAT (arm64+x86_64): патч arm64, x86_64 как есть
 python3 harness/macos/run_app.py       # полный .app: собрать -> coldhook ipa -> запустить
 ```
 
@@ -74,7 +75,8 @@ python3 -m coldhook ipa    <in.ipa|.app> -c cfg -o <out>       # merge в бан
 - [x] Python-оркестратор: `info | merge | patch`
 - [x] Патч бандла `ipa` (.ipa/.app, merge in-place, без подписи) + macOS .app полигон
 - [ ] Подпись бандла под TrollStore/dev-серт (resign .app, порядок вложенности)
-- [ ] Дыра 2c (импорт B из dylib, которого нет в таргете) / exports trie / multi-chain / FAT-слайсинг / MH_EXECUTE base
+- [x] FAT-слайсинг (патч arm64/arm64e-слайсов, неподдерживаемые — как есть, сборка lipo)
+- [ ] Дыра 2c (импорт B из dylib, которого нет в таргете) / exports trie / multi-chain / MH_EXECUTE base
 
 ## Лицензии
 

@@ -6,6 +6,7 @@ vendor/MachOMerger/.build/
 harness/macos/build/
 harness/macos/build_offset/
 harness/macos/build_hookaddr/
+harness/macos/build_fat/
 
 # Python
 __pycache__/
