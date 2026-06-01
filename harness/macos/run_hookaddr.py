@@ -49,17 +49,17 @@ def main():
     with open(hook_c, "w") as f:
         f.write(f"""#include <coldhook.h>
 #include <unistd.h>
-COLDHOOK_ORIG(fix_domain, const char *, int);
+CH_DECLARE_ORIG(fix_domain, const char *, int);
 
 __attribute__((visibility("default")))
 int hook_ppid(void) {{ return (int)getppid(); }}   // внешний импорт B (регрессия)
 
 const char *fix_domain(int env) {{
     if (env == 99) return "https://hooked.via.macro";  // чиним провал
-    return ORIG(fix_domain)(env);                        // известное -> в оригинал
+    return CH_ORIG(fix_domain)(env);                    // известное -> в оригинал
 }}
 
-HOOK_ADDR(0x{off:x}, fix_domain);
+CH_HOOK_ADDR(0x{off:x}, fix_domain);
 """)
 
     say("3/4 coldhook merge (компилит хук с -I coldhook.h, мёрджит)")
