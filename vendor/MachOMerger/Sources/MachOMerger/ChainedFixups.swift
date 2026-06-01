@@ -21,26 +21,53 @@ func coldhookImportSize(_ format: UInt32) -> Int {
     return format == 1 ? 4 : (format == 2 ? 8 : 16)
 }
 
-// Упорядоченный список путей LC_LOAD_DYLIB бинаря (1-based ordinal = index+1).
+// Все команды загрузки dylib — все они входят в dylib-ordinal пространство биндов
+// (LC_ID_DYLIB сюда НЕ входит). Считать только LC_LOAD_DYLIB было бы неверно для
+// бинарей с weak/reexport/lazy/upward-зависимостями.
+let coldhookDylibLCs: Set<UInt32> = [
+    UInt32(LC_LOAD_DYLIB),
+    0x80000018, // LC_LOAD_WEAK_DYLIB
+    0x8000001f, // LC_REEXPORT_DYLIB
+    0x20,       // LC_LAZY_LOAD_DYLIB
+    0x80000023, // LC_LOAD_UPWARD_DYLIB
+]
+
+func coldhookDylibName(_ op: OpaqueLoadCommand) -> String {
+    // op.data — тело команды без 8-байтного заголовка; name_offset считается от начала
+    // команды (включая заголовок), поэтому в op.data строка лежит по nameOff-8.
+    guard let nameOff = op.data.tryGetGeneric(type: UInt32.self, offset: 0) else { return "" }
+    let strStart = Int(nameOff) - 8
+    if strStart >= 0, strStart < op.data.count,
+       let s = try? op.data.advanced(by: strStart).toString(encoding: .utf8, nullTerminated: true) {
+        return s
+    }
+    return ""
+}
+
+// Упорядоченный список путей dylib-зависимостей (1-based ordinal = index+1).
 func coldhookDylibPaths(_ machO: MachO) -> [String] {
     var paths: [String] = []
-    for cmd in machO.cmds where cmd.type.rawValue == LC_LOAD_DYLIB {
-        guard let op = cmd as? OpaqueLoadCommand,
-              let nameOff = op.data.tryGetGeneric(type: UInt32.self, offset: 0) else {
-            paths.append("")
-            continue
-        }
-        // op.data — тело команды без 8-байтного заголовка; name_offset считается от начала
-        // команды (включая заголовок), поэтому в op.data строка лежит по nameOff-8.
-        let strStart = Int(nameOff) - 8
-        if strStart >= 0, strStart < op.data.count,
-           let s = try? op.data.advanced(by: strStart).toString(encoding: .utf8, nullTerminated: true) {
-            paths.append(s)
+    for cmd in machO.cmds where coldhookDylibLCs.contains(cmd.type.rawValue) {
+        if let op = cmd as? OpaqueLoadCommand {
+            paths.append(coldhookDylibName(op))
         } else {
             paths.append("")
         }
     }
     return paths
+}
+
+// Сырые байты команды загрузки dylib `name` (cmd+cmdsize+тело) — чтобы переэмитить её
+// в таргет вербатимом (с настоящими версиями/таймстампом B).
+func coldhookDylibCmdData(_ machO: MachO, _ name: String) -> Data? {
+    for cmd in machO.cmds where coldhookDylibLCs.contains(cmd.type.rawValue) {
+        if let op = cmd as? OpaqueLoadCommand, coldhookDylibName(op) == name {
+            return Data(fromObject: op.type.rawValue)
+                 + Data(fromObject: UInt32(op.data.count + 8))
+                 + op.data
+        }
+    }
+    return nil
 }
 
 // Разбор import-таблицы chained fixups. Поддержаны форматы 1/2 (u32: lib_ordinal:8,
@@ -151,33 +178,54 @@ func mergeChainedFixups(infoA: MachOMergeData, infoB: MachOMergeData, relocInfo:
     var appendedImports = Data()
     var appendedSymbols = Data()
     var appendedCount: UInt32 = 0
-    // dedup по ключу "aOrd|name" -> ordinal в merged-таблице (сидим импортами A).
+    // dedup по ключу "dylibOrd|name" -> ordinal в merged-таблице (сидим импортами A).
     var importIndex: [String: UInt32] = [:]
     for (i, imp) in aImports.enumerated() {
         importIndex["\(imp.libOrd)|\(imp.name)"] = UInt32(i)
     }
+    // Новые dylib, которых нет в A: имя -> назначенный dylib-ordinal (после dylib A).
+    var newDylibOrd: [String: UInt8] = [:]
 
     // Маппинг внешнего импорта B (по ordinal'у его фиксапа) -> ordinal в merged-таблице.
-    // nil => не смогли (спец-ordinal, dylib не грузится таргетом, неподдержанный формат).
     func mapExternalImport(bOrdinal: UInt32) -> UInt32? {
         guard Int(bOrdinal) < bImports.count else { return nil }
         let imp = bImports[Int(bOrdinal)]
         guard imp.libOrd >= 1, Int(imp.libOrd) <= bDylibs.count else { return nil } // только нормальные ordinals
         let dylibName = bDylibs[Int(imp.libOrd) - 1]
-        guard let aIdx = aDylibs.firstIndex(of: dylibName) else {
-            // dylib нет в LC_LOAD_DYLIB таргета -> нужна вставка load command (2c, отложено)
-            print("ColdHook: dylib '\(dylibName)' для импорта B '\(imp.name)' не загружается таргетом — нужна вставка LC_LOAD_DYLIB (пока не реализовано)")
-            return nil
+
+        // dylib-ordinal в merged: либо существующий dylib таргета, либо новый (по опции).
+        let dylibOrd: UInt8
+        if let aIdx = aDylibs.firstIndex(of: dylibName) {
+            dylibOrd = UInt8(aIdx + 1)
+        } else if coldhookAllowNewDylibs {
+            if let existing = newDylibOrd[dylibName] {
+                dylibOrd = existing
+            } else {
+                guard let cmdData = coldhookDylibCmdData(machOB, dylibName) else {
+                    print("ColdHook: не нашёл команду загрузки '\(dylibName)' в хуке")
+                    exit(-1)
+                }
+                // dylib A занимают 1..aDylibs.count, новые идут следом.
+                let ord = UInt8(aDylibs.count + coldhookNewDylibCmds.count + 1)
+                newDylibOrd[dylibName] = ord
+                coldhookNewDylibCmds.append(cmdData)   // main.swift доэмитит LC_LOAD_DYLIB
+                dylibOrd = ord
+            }
+        } else {
+            print("ColdHook: импорт B '\(imp.name)' тянет dylib '\(dylibName)', которого НЕТ в "
+                + "LC_LOAD_DYLIB таргета. Разреши --allow-new-dylibs (вставит LC_LOAD_DYLIB) "
+                + "или убери эту зависимость из хука.")
+            exit(-1)
         }
-        let aOrd = UInt8(aIdx + 1)
-        let key = "\(aOrd)|\(imp.name)"
+
+        let key = "\(dylibOrd)|\(imp.name)"
         if let existing = importIndex[key] { return existing }
         guard importsFormatA == 1 else {
             print("ColdHook: дозапись импортов поддержана только для format 1")
             return nil
         }
         let newNameOff = UInt32(symbolsBlobA.count + appendedSymbols.count)
-        let raw = UInt32(aOrd) | (imp.weak ? 0x100 : 0) | (newNameOff << 9)
+        let raw = UInt32(dylibOrd) | (imp.weak ? 0x100 : 0) | (newNameOff << 9)
         appendedImports.appendGeneric(value: raw)
         appendedSymbols.append(imp.name.data(using: .utf8)!)
         appendedSymbols.append(0) // null terminator

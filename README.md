@@ -24,6 +24,7 @@ python3 harness/macos/run.py           # merge + Replace + ORIG + импорты
 python3 harness/macos/run_offset.py    # хук по сырому оффсету (магик-символ вручную)
 python3 harness/macos/run_hookaddr.py  # by-offset через макрос HOOK_ADDR + coldhook merge
 python3 harness/macos/run_fat.py       # FAT (arm64+x86_64): патч arm64, x86_64 как есть
+python3 harness/macos/run_newdylib.py  # хук тянет свой dylib (libz) -> --allow-new-dylibs
 python3 harness/macos/run_app.py       # полный .app: собрать -> coldhook ipa -> запустить
 ```
 
@@ -61,7 +62,12 @@ python3 -m coldhook ipa    <in.ipa|.app> -c cfg -o <out>       # merge в бан
 ```
 
 Конфиг (`coldhook.toml`) — список `[[target]]` (binary → sources|dylib) + `[signing]`.
-Проверяет арку/платформу/cryptid, отказывается от FAT и зашифрованных бинарей.
+Проверяет арку/платформу/cryptid; FAT — патчит arm64/arm64e-слайсы, остальные оставляет.
+
+Импорты хука B: новые символы из dylib, которые таргет **уже линкует**, дозаписываются
+автоматически. Если хуку нужен dylib, которого в таргете НЕТ — по умолчанию ошибка;
+`allow_new_dylibs = true` (в `[[target]]`) или `--allow-new-dylibs` (в `merge`) разрешает
+дописать `LC_LOAD_DYLIB`. Доп. флаги линковки хука — `ldflags = ["-lz"]` / `--ldflags`.
 
 **Подпись**: `merge`/`patch` подписывают (codesign/ldid), `ipa` — НЕТ по умолчанию
 (`--sign-bundle` включает). iOS-установка требует подписи отдельно.
@@ -76,7 +82,8 @@ python3 -m coldhook ipa    <in.ipa|.app> -c cfg -o <out>       # merge в бан
 - [x] Патч бандла `ipa` (.ipa/.app, merge in-place, без подписи) + macOS .app полигон
 - [ ] Подпись бандла под TrollStore/dev-серт (resign .app, порядок вложенности)
 - [x] FAT-слайсинг (патч arm64/arm64e-слайсов, неподдерживаемые — как есть, сборка lipo)
-- [ ] Дыра 2c (импорт B из dylib, которого нет в таргете) / exports trie / multi-chain / MH_EXECUTE base
+- [x] Свои dylib у B (`--allow-new-dylibs`: вставка LC_LOAD_DYLIB + ремап dylib-ordinals)
+- [ ] exports trie / multi-chain / MH_EXECUTE base / многоинструкционный ORIG (PC-relative пролог)
 
 ## Лицензии
 
