@@ -1,4 +1,4 @@
-"""Оркестрация патча одного таргета: introspect -> build hook -> merge -> sign."""
+"""Оркестрация патча одного таргета: introspect -> build hook -> merge -> [sign]."""
 from __future__ import annotations
 
 import os
@@ -20,9 +20,27 @@ class PatchError(RuntimeError):
     pass
 
 
-def patch_target(target: Target, signing: Signing) -> str:
-    """Пропатчить один таргет, вернуть путь результата."""
-    binary = target.binary
+def _build_or_get_hook(target: Target, info: macho.MachOInfo, tmp: str) -> str:
+    """Собрать хук из исходников под платформу таргета либо вернуть готовый dylib."""
+    if target.sources:
+        hook = os.path.join(tmp, "libhook.dylib")
+        _say(f"[{target.name}] собираю хук под {info.arch}/{info.platform or 'macos'}")
+        toolchain.build_hook(target.sources, hook, info.arch,
+                             info.platform or "macos", info.minos)
+        return hook
+    hook = target.dylib
+    _say(f"[{target.name}] готовый хук: {os.path.basename(hook)}")
+    if not os.path.exists(hook):
+        raise PatchError(f"[{target.name}] хук-dylib не найден: {hook}")
+    return hook
+
+
+def patch_target(target: Target, signing: Signing, binary: str, out: str,
+                 do_sign: bool = True) -> str:
+    """Пропатчить бинарь `binary`, результат в `out`. Подпись опциональна.
+
+    Если out == binary — патчим in-place (через временный файл, затем замена).
+    """
     if not os.path.exists(binary):
         raise PatchError(f"[{target.name}] таргет не найден: {binary}")
 
@@ -36,34 +54,31 @@ def patch_target(target: Target, signing: Signing) -> str:
                          f"сначала тонкий слайс: lipo {binary} -thin {info.arch} -output ...")
     if info.encrypted:
         raise PatchError(f"[{target.name}] бинарь зашифрован (cryptid={info.cryptid}); "
-                         f"нужен расшифрованный (decrypted) дамп")
+                         f"нужен расшифрованный дамп")
 
-    out = target.resolved_out()
+    in_place = os.path.realpath(out) == os.path.realpath(binary)
     os.makedirs(os.path.dirname(os.path.abspath(out)) or ".", exist_ok=True)
 
     tmp = tempfile.mkdtemp(prefix="coldhook_")
     try:
-        # 1. хук-dylib: либо собираем из исходников под платформу таргета, либо готовый
-        if target.sources:
-            hook = os.path.join(tmp, "libhook.dylib")
-            _say(f"[{target.name}] собираю хук под {info.arch}/{info.platform or 'macos'}")
-            toolchain.build_hook(target.sources, hook, info.arch,
-                                 info.platform or "macos", info.minos)
+        hook = _build_or_get_hook(target, info, tmp)
+
+        merged = os.path.join(tmp, "merged") if in_place else out
+        _say(f"[{target.name}] merge -> {os.path.basename(out)}"
+             f"{' (in-place)' if in_place else ''}")
+        toolchain.merge(binary, hook, merged)
+
+        if do_sign:
+            how = "ldid" if signing.use_ldid else f"codesign '{signing.identity}'"
+            _say(f"[{target.name}] подпись ({how})")
+            toolchain.sign(merged, identity=signing.identity,
+                           entitlements=signing.entitlements, use_ldid=signing.use_ldid)
         else:
-            hook = target.dylib
-            _say(f"[{target.name}] готовый хук: {os.path.basename(hook)}")
-            if not os.path.exists(hook):
-                raise PatchError(f"[{target.name}] хук-dylib не найден: {hook}")
+            _say(f"[{target.name}] {C_YELL}подпись пропущена{C_CYAN}")
 
-        # 2. merge хука в таргет
-        _say(f"[{target.name}] merge -> {os.path.basename(out)}")
-        toolchain.merge(binary, hook, out)
-
-        # 3. resign результата (merge инвалидирует подпись)
-        how = "ldid" if signing.use_ldid else f"codesign '{signing.identity}'"
-        _say(f"[{target.name}] подпись ({how})")
-        toolchain.sign(out, identity=signing.identity,
-                       entitlements=signing.entitlements, use_ldid=signing.use_ldid)
+        if in_place:
+            shutil.copymode(binary, merged)
+            shutil.move(merged, out)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
@@ -71,9 +86,12 @@ def patch_target(target: Target, signing: Signing) -> str:
     return out
 
 
-def patch_all(config: Config) -> list[str]:
+def patch_all(config: Config, do_sign: bool = True) -> list[str]:
+    """patch-режим: таргеты — реальные файлы относительно конфига."""
     toolchain.ensure_merger()
     results = []
     for t in config.targets:
-        results.append(patch_target(t, config.signing))
+        binary = config.resolve(t.binary)
+        out = t.out or (binary + ".coldhook")
+        results.append(patch_target(t, config.signing, binary, out, do_sign=do_sign))
     return results

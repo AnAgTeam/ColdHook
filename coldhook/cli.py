@@ -4,7 +4,7 @@ from __future__ import annotations
 import argparse
 import sys
 
-from . import __version__, config, macho
+from . import __version__, config, ipa, macho
 from .build import C_RED, C_RST, PatchError, patch_all, patch_target
 from .config import Signing, Target
 from .toolchain import ToolError
@@ -38,14 +38,23 @@ def cmd_merge(args) -> int:
     target = Target(name=args.name or "merge", binary=args.target,
                     sources=args.src or [], dylib=args.dylib, out=args.out)
     signing = Signing(identity=args.sign, entitlements=args.ent, use_ldid=args.ldid)
-    patch_target(target, signing)
+    out = args.out or (args.target + ".coldhook")
+    patch_target(target, signing, args.target, out, do_sign=not args.no_sign)
     return 0
 
 
 def cmd_patch(args) -> int:
     cfg = config.load(args.config)
     print(f"конфиг: {args.config}  ({len(cfg.targets)} таргет(ов))")
-    patch_all(cfg)
+    patch_all(cfg, do_sign=not args.no_sign)
+    return 0
+
+
+def cmd_ipa(args) -> int:
+    cfg = config.load(args.config)
+    print(f"конфиг: {args.config}  ({len(cfg.targets)} таргет(ов))")
+    # для бандла подпись по умолчанию ВЫКЛ; включается явным --sign-bundle
+    ipa.patch_bundle(args.input, cfg, args.out, do_sign=args.sign_bundle)
     return 0
 
 
@@ -65,12 +74,22 @@ def build_parser() -> argparse.ArgumentParser:
     pm.add_argument("--dylib", metavar="FILE", help="готовый хук-dylib (вместо --src)")
     pm.add_argument("--out", help="путь результата (по умолч. <target>.coldhook)")
     pm.add_argument("--name", help="метка для логов")
+    pm.add_argument("--no-sign", action="store_true", help="не подписывать результат")
     _add_sign_args(pm)
     pm.set_defaults(func=cmd_merge)
 
-    pp = sub.add_parser("patch", help="пропатчить все таргеты из конфига")
+    pp = sub.add_parser("patch", help="пропатчить все таргеты из конфига (отдельные бинари)")
     pp.add_argument("--config", "-c", required=True, help="coldhook.toml")
+    pp.add_argument("--no-sign", action="store_true", help="не подписывать результаты")
     pp.set_defaults(func=cmd_patch)
+
+    pb = sub.add_parser("ipa", help="пропатчить .ipa или .app (merge in-place, БЕЗ подписи)")
+    pb.add_argument("input", help="входной .ipa или .app-каталог")
+    pb.add_argument("--config", "-c", required=True, help="coldhook.toml")
+    pb.add_argument("--out", "-o", required=True, help="выходной .ipa или .app")
+    pb.add_argument("--sign-bundle", action="store_true",
+                    help="подписать бинари в бандле (по умолчанию НЕТ — твоя забота)")
+    pb.set_defaults(func=cmd_ipa)
 
     return p
 
