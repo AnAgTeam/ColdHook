@@ -28,12 +28,30 @@ python3 harness/macos/run.py
 Ожидаемо: без хука `domain_for(99)` падает в `__builtin_trap()` (SIGTRAP), с хуком —
 возвращает валидный домен.
 
+## Оркестратор (Python)
+
+Конфиг-движок: интроспекция Mach-O → сборка хука под платформу таргета → merge → resign.
+
+```bash
+# одиночный бинарь
+python3 -m coldhook info   <binary>
+python3 -m coldhook merge  --target <binary> --src hook.c --src orig_stubs.S --out <out> --sign -
+
+# пачкой по конфигу (маппинг разных таргетов на свои хуки)
+python3 -m coldhook patch  -c coldhook.toml
+```
+
+Конфиг (`coldhook.toml`) — список `[[target]]` (binary → sources|dylib) + `[signing]`.
+Проверяет арку/платформу/cryptid, отказывается от FAT и зашифрованных бинарей.
+
 ## Статус
 
 - [x] M1: parse + merge + Replace-хук по символу + codesign + загрузка (локально, macOS)
-- [ ] Merge импортов таргета A (см. `vendor/MachOMerger` — главный блокер для боевых бинарей)
-- [ ] Detour-режим (`ORIG`/возврат в оригинал)
-- [ ] Python-оркестратор + IPA in/out + resign под TrollStore/dev-серт
+- [x] Merge импортов таргета A (Step 1) + внешних импортов B (Step 2), dual-format (arm64 2/6, arm64e 1/12)
+- [x] Detour-режим (`ORIG`/возврат в оригинал, single-instruction трамплин)
+- [x] Python-оркестратор: конфиг + merge + resign (`coldhook info|merge|patch`)
+- [ ] Патч бинарников из IPA (распаковка/запаковка/resign .app)
+- [ ] Дыра 2c (импорт B из dylib, которого нет в таргете) / exports trie / multi-chain
 
 ## Лицензии
 
