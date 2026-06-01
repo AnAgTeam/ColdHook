@@ -28,8 +28,24 @@ func getMagicSymbolVal(_ sym: String) -> (UInt64, Bool)? {
         
         let thA64 = th.state.getGeneric(type: arm_thread_state64_t.self)
         return (thA64.__pc, false)
-        
+
     default:
+        // ColdHook: адресный магик-символ для хука по сырому оффсету (стрипнутые бинари
+        // без символов). Имя вида _COLDHOOK_ADDR_<hex>; значение трактуется как
+        // ОРИГИНАЛЬНЫЙ vmaddr таргета A (для dylib-фреймворка == оффсет из IDA, т.к. __TEXT@0).
+        // Используется и в HOOK_, и в HOOKTRAMPOLINE_ (резолв dstName идёт через эту же функцию).
+        let prefix = "_COLDHOOK_ADDR_"
+        if sym.hasPrefix(prefix) {
+            var hex = Substring(sym.dropFirst(prefix.count))
+            if hex.hasPrefix("0x") || hex.hasPrefix("0X") {
+                hex = hex.dropFirst(2)
+            }
+            if let v = UInt64(hex, radix: 16) {
+                return (v, false) // isB:false -> адрес в A
+            }
+            print("ColdHook: не разобрал адрес в магик-символе '\(sym)'")
+            exit(-1)
+        }
         return nil
     }
 }

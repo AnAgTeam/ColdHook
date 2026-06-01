@@ -4,6 +4,7 @@ vendor/MachOMerger/.build/
 
 # Локальные сборки харнесса
 harness/macos/build/
+harness/macos/build_offset/
 
 # Python
 __pycache__/
