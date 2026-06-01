@@ -12,3 +12,4 @@ __pycache__/
 
 # macOS
 .DS_Store
+harness/macos/build_app/

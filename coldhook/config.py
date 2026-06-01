@@ -1,6 +1,8 @@
 """TOML-конфиг ColdHook: список таргетов (бинарь -> хук) + подпись.
 
-Все пути в конфиге — относительно каталога самого конфига.
+`binary` хранится КАК НАПИСАНО (резолвится вызывающим: для `patch` — относительно
+конфига, для `ipa` — относительно корня .app). `sources`/`dylib`/`out` — dev-файлы,
+резолвятся абсолютно от каталога конфига.
 """
 from __future__ import annotations
 
@@ -19,16 +21,10 @@ class Signing:
 @dataclass
 class Target:
     name: str
-    binary: str                    # путь к целевому Mach-O (патчится merge'ем)
-    sources: list[str] = field(default_factory=list)  # исходники хука (компилируются)
-    dylib: str | None = None       # ИЛИ готовый хук-dylib
-    out: str | None = None         # куда писать результат (по умолч. рядом с binary)
-
-    def resolved_out(self) -> str:
-        if self.out:
-            return self.out
-        # по умолчанию: <binary>.coldhook (рядом), чтобы не затирать оригинал
-        return self.binary + ".coldhook"
+    binary: str                    # путь как написано (relative-to-.app для ipa)
+    sources: list[str] = field(default_factory=list)  # исходники хука (абс)
+    dylib: str | None = None       # ИЛИ готовый хук-dylib (абс)
+    out: str | None = None         # куда писать (patch-режим; абс)
 
 
 @dataclass
@@ -36,6 +32,9 @@ class Config:
     signing: Signing
     targets: list[Target]
     base_dir: str                  # каталог конфига (для разрешения путей)
+
+    def resolve(self, p: str) -> str:
+        return p if os.path.isabs(p) else os.path.normpath(os.path.join(self.base_dir, p))
 
 
 def _abs(base: str, p: str | None) -> str | None:
@@ -64,19 +63,18 @@ def load(path: str) -> Config:
         if "binary" not in t:
             raise ValueError(f"target #{i}: нет обязательного поля 'binary'")
         name = t.get("name", os.path.basename(t["binary"]))
-        sources = [(_abs(base, x)) for x in t.get("sources", [])]
-        targets.append(Target(
+        tgt = Target(
             name=name,
-            binary=_abs(base, t["binary"]),
-            sources=sources,
+            binary=t["binary"],                       # как написано
+            sources=[_abs(base, x) for x in t.get("sources", [])],
             dylib=_abs(base, t.get("dylib")),
             out=_abs(base, t.get("out")),
-        ))
-        tgt = targets[-1]
+        )
         if not tgt.sources and not tgt.dylib:
             raise ValueError(f"target '{name}': нужен 'sources' или 'dylib'")
         if tgt.sources and tgt.dylib:
             raise ValueError(f"target '{name}': укажи либо 'sources', либо 'dylib', не оба")
+        targets.append(tgt)
 
     if not targets:
         raise ValueError("в конфиге нет ни одного [[target]]")
