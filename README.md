@@ -2,7 +2,7 @@
 
 Статический «холодный» хук iOS-бинарей через **слияние** хук-кода в таргет (на базе
 MachOMerger), без рантайм-кодогенерации и W^X-переходов. Хуки — **по символам**
-(`HOOK(name)`/`ORIG(name)`) и **по оффсету** (`COLDHOOK_ADDR_<hex>` для стрипнутых
+(`HOOK(name)`/`ORIG(name)`) и **по оффсету** (`CH_HOOK_ADDR(off, fn)` для стрипнутых
 бинарей), без интеграции Logos. Подробный план — `coldhook_plan.md`.
 
 ## Структура
@@ -10,7 +10,7 @@ MachOMerger), без рантайм-кодогенерации и W^X-перех
 ```
 vendor/MachOMerger/   форк движка слияния (Dopamine 2.x, MIT) + правки ColdHook
 vendor/dyldhook/      референс макросов HOOK()/ORIG()
-harness/macos/        локальные macOS-харнессы (arm64) — dev-полигоны без устройства
+tests/macos/          локальные macOS-харнессы (arm64) — dev-полигоны без устройства
 coldhook/             Python-оркестратор (info | merge | patch | ipa)
 ```
 
@@ -20,31 +20,36 @@ coldhook/             Python-оркестратор (info | merge | patch | ipa)
 # сборка движка (один раз)
 cd vendor/MachOMerger && swift build -c release && cd -
 
-python3 harness/macos/run.py           # merge + Replace + ORIG + импорты A/B (dylib)
-python3 harness/macos/run_offset.py    # хук по сырому оффсету (магик-символ вручную)
-python3 harness/macos/run_hookaddr.py  # by-offset через макрос HOOK_ADDR + coldhook merge
-python3 harness/macos/run_fat.py       # FAT (arm64+x86_64): патч arm64, x86_64 как есть
-python3 harness/macos/run_newdylib.py  # хук тянет свой dylib (libz) -> --allow-new-dylibs
-python3 harness/macos/run_app.py       # полный .app: собрать -> coldhook ipa -> запустить
+python3 tests/macos/run.py           # merge + Replace + ORIG + импорты A/B (dylib)
+python3 tests/macos/run_offset.py    # хук по сырому оффсету (магик-символ вручную)
+python3 tests/macos/run_hookaddr.py  # by-offset через макрос CH_HOOK_ADDR + coldhook merge
+python3 tests/macos/run_fat.py       # FAT (arm64+x86_64): патч arm64, x86_64 как есть
+python3 tests/macos/run_newdylib.py  # хук тянет свой dylib (libz) -> --allow-new-dylibs
+python3 tests/macos/run_app.py       # полный .app: собрать -> coldhook ipa -> запустить
 ```
 
-### Хуки по оффсету в коде (`HOOK_ADDR`)
+### Хуки по оффсету в коде (`CH_HOOK_ADDR`)
 
-Для стрипнутых бинарей — обычная функция + `HOOK_ADDR(offset, fn)` (из `<coldhook.h>`);
+Для стрипнутых бинарей — обычная функция + `CH_HOOK_ADDR(offset, fn)` (из `<coldhook.h>`);
 оффсет = оригинальный vmaddr цели (как в IDA). Магик-символы/ORIG-трамплины генерит макрос.
 
 ```c
 #include <coldhook.h>
-COLDHOOK_ORIG(fix_domain, const char *, int);
-const char *fix_domain(int env) {
-    if (env == 99) return "https://fallback";   // чиним провал
-    return ORIG(fix_domain)(env);                // остальное -> в оригинал
+CH_DECLARE_ORIG(fix_domain, const char *, int);   // объявить оригинал (для detour)
+const char *fix_domain(int env) {                 // обычная функция, без атрибутов
+    if (env == 99) return "https://fallback";     // чиним провал
+    return CH_ORIG(fix_domain)(env);              // остальное -> в оригинал
 }
-HOOK_ADDR(0xb99a8, fix_domain);
+CH_HOOK_ADDR(0xb99a8, fix_domain);
 ```
 
+Префикс `CH_` — чтобы не сталкиваться с чужими `HOOK`/`ORIG` (Substrate/Logos/vendored
+`machomerger_hook.h`). `#define COLDHOOK_SHORT_NAMES` до include даёт короткие алиасы
+`HOOK_ADDR`/`ORIG`/`DECLARE_ORIG`. Атрибут видимости не нужен — функция-хук должна быть
+лишь не-`static`; для `dlsym`/`-fvisibility=hidden` есть `CH_EXPORT`.
+
 Конфиг для такого таргета — просто `binary` + `sources` (оффсеты живут в коде). Строка-модуль
-`HOOK_ADDR("Bin", off, fn)` зарезервирована под будущий shared-режим (одна либа на много бинарей).
+`CH_HOOK_ADDR("Bin", off, fn)` зарезервирована под будущий shared-режим (одна либа на много бинарей).
 
 Паттерн цели: `domain_for(env)` отдаёт домен для известного окружения, иначе падает
 в `__builtin_trap()` (модель `assertionFailure`). Хук чинит провальный путь, известное
@@ -77,7 +82,7 @@ python3 -m coldhook ipa    <in.ipa|.app> -c cfg -o <out>       # merge в бан
 - [x] M1: parse + merge + Replace-хук по символу + codesign + загрузка (локально, macOS)
 - [x] Merge импортов таргета A (Step 1) + внешних импортов B (Step 2), dual-format (arm64 2/6, arm64e 1/12)
 - [x] Detour-режим (`ORIG`/возврат в оригинал, single-instruction трамплин)
-- [x] Хук по оффсету: магик-символ `COLDHOOK_ADDR_<hex>` + макрос `HOOK_ADDR(off, fn)` в коде
+- [x] Хук по оффсету: магик-символ `COLDHOOK_ADDR_<hex>` + макрос `CH_HOOK_ADDR(off, fn)` в коде (+ `CH_ORIG`/`CH_DECLARE_ORIG`/`CH_EXPORT`, короткие алиасы за `COLDHOOK_SHORT_NAMES`)
 - [x] Python-оркестратор: `info | merge | patch`
 - [x] Патч бандла `ipa` (.ipa/.app, merge in-place, без подписи) + macOS .app полигон
 - [ ] Подпись бандла под TrollStore/dev-серт (resign .app, порядок вложенности)

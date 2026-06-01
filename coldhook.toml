@@ -2,7 +2,7 @@
 #
 # Запуск:
 #   1) собрать движок:   (cd vendor/MachOMerger && swift build -c release)
-#   2) собрать таргет:    python3 harness/macos/run.py   # создаёт build/libtarget.dylib
+#   2) собрать таргет:    python3 tests/macos/run.py   # создаёт build/libtarget.dylib
 #   3) пропатчить:        python3 -m coldhook patch -c coldhook.toml
 
 [signing]
@@ -14,9 +14,9 @@ identity = "-"          # adhoc; для боевого — имя серта и�
 # новые [[target]] с своими binary/sources.
 [[target]]
 name = "demo"
-binary = "harness/macos/build/libtarget.dylib"
+binary = "tests/macos/build/libtarget.dylib"
 sources = [
-  "harness/macos/hook.c",
-  "harness/macos/orig_stubs.S",
+  "tests/macos/hook.c",
+  "tests/macos/orig_stubs.S",
 ]
-out = "harness/macos/build/libtarget.coldhook.dylib"
+out = "tests/macos/build/libtarget.coldhook.dylib"
