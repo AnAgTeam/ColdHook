@@ -22,8 +22,8 @@ func mergeChainedFixups(infoA: MachOMergeData, infoB: MachOMergeData, relocInfo:
     }
     
     let startsOffA     = cfA.getGeneric(type: UInt32.self, offset: 4)
-    //let importsOffA    = cfA.getGeneric(type: UInt32.self, offset: 8)
-    //let symsOffA       = cfA.getGeneric(type: UInt32.self, offset: 12)
+    let importsOffA    = cfA.getGeneric(type: UInt32.self, offset: 8)
+    let symsOffA       = cfA.getGeneric(type: UInt32.self, offset: 12)
     let importsCountA  = cfA.getGeneric(type: UInt32.self, offset: 16)
     let importsFormatA = cfA.getGeneric(type: UInt32.self, offset: 20)
     let symsFormatA    = cfA.getGeneric(type: UInt32.self, offset: 24)
@@ -65,12 +65,11 @@ func mergeChainedFixups(infoA: MachOMergeData, infoB: MachOMergeData, relocInfo:
         exit(-1)
     }*/
     
-    // If there are any imports, resolve them now
-    guard importsCountA == 0 else {
-        print("XXX: Can only support zero imports for A right now!")
-        exit(-1)
-    }
-    
+    // ColdHook Step 1: импорты A больше НЕ запрещены. Бинды A в цепочках указывают на
+    // imports-таблицу A по ordinal'у; мы переносим эту таблицу (и symbols-пул) в выход
+    // вербатимом ниже, не трогая ordinal'ы. Слайд сегментов на бинды не влияет (бинды
+    // внешние, без адреса), а rebase'ы A чинит fixupViaSplitInfo. Поэтому здесь — ничего.
+
     if importsCountB != 0 {
         // Need to walk chain
         let cf = try! b.getChainedFixups()
@@ -288,22 +287,42 @@ func mergeChainedFixups(infoA: MachOMergeData, infoB: MachOMergeData, relocInfo:
         starts.appendGeneric(value: 0 as UInt32)
     }
     
-    let startsSegData = starts + segData
-    
+    var startsSegData = starts + segData
+
+    // ColdHook Step 1: переносим imports-таблицу и symbols-пул A вербатимом.
+    //  - importsBlobA = cfA[importsOffA ..< symsOffA]  (массив импортов + возможный pad);
+    //  - symbolsBlobA = cfA[symsOffA ..< end]          (строковый пул).
+    // name_offset'ы импортов считаются ОТ symsOff, поэтому пока imports и symbols идут
+    // подряд (как в A), смещения остаются валидными независимо от их позиции в блобе.
+    let importsBlobA = (importsCountA == 0)
+        ? Data()
+        : cfA.subdata(in: Int(importsOffA)..<Int(symsOffA))
+    let symbolsBlobA = cfA.subdata(in: Int(symsOffA)..<cfA.count)
+
+    // imports выравниваем на 8 байт (покрывает все import-форматы, включая addend64).
+    let baseOff     = 32 + startsSegData.count
+    let importsOff  = (baseOff + 7) & ~7
+    if importsOff > baseOff {
+        startsSegData.append(Data(repeating: 0, count: importsOff - baseOff))
+    }
+    let symsOff = importsOff + importsBlobA.count
+
     var newChainedFixups = Data()
-    
+
     // Emit header
-    newChainedFixups.appendGeneric(value:  0 as UInt32)                     // ???
-    newChainedFixups.appendGeneric(value: 32 as UInt32)                     // startsOff
-    newChainedFixups.appendGeneric(value: UInt32(32 + startsSegData.count)) // importsOff
-    newChainedFixups.appendGeneric(value: UInt32(32 + startsSegData.count)) // symsOff
-    newChainedFixups.appendGeneric(value: 0 as UInt32)                      // importsCount
-    newChainedFixups.appendGeneric(value: importsFormatA)                   // importsFormat
-    newChainedFixups.appendGeneric(value: symsFormatA)                      // symsFormat
-    newChainedFixups.appendGeneric(value: 0 as UInt32)                      // pad
-    
-    // Emit data
+    newChainedFixups.appendGeneric(value:  0 as UInt32)            // fixups_version
+    newChainedFixups.appendGeneric(value: 32 as UInt32)            // startsOff
+    newChainedFixups.appendGeneric(value: UInt32(importsOff))      // importsOff
+    newChainedFixups.appendGeneric(value: UInt32(symsOff))         // symsOff
+    newChainedFixups.appendGeneric(value: importsCountA)           // importsCount (А сохранены)
+    newChainedFixups.appendGeneric(value: importsFormatA)          // importsFormat
+    newChainedFixups.appendGeneric(value: symsFormatA)             // symsFormat
+    newChainedFixups.appendGeneric(value: 0 as UInt32)             // pad
+
+    // Emit data: starts(+pad) -> imports A -> symbols A
     newChainedFixups.append(startsSegData)
-    
+    newChainedFixups.append(importsBlobA)
+    newChainedFixups.append(symbolsBlobA)
+
     return newChainedFixups
 }

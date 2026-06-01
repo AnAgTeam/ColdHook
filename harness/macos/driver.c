@@ -19,6 +19,18 @@ int main(int argc, char **argv)
         return 1;
     }
 
+    // Сначала прогоняем НЕ хукаемую target_health() — она зовёт импорт A (_getpid).
+    // Доказывает, что бинд A жив и резолвится в слитом бинаре через выполнение.
+    int (*health)(void) = (int (*)(void))dlsym(h, "target_health");
+    if (health) {
+        int pid = health();
+        printf("[driver] target_health() = %d (импорт A _getpid)\n", pid);
+        if (pid <= 0) {
+            fprintf(stderr, "[driver] импорт A вернул мусор -> бинд сломан\n");
+            return 1;
+        }
+    }
+
     domain_for_t fn = (domain_for_t)dlsym(h, "domain_for");
     if (!fn) {
         fprintf(stderr, "[driver] dlsym(domain_for) failed: %s\n", dlerror());
