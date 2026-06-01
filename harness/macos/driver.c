@@ -3,6 +3,7 @@
 // Путь к dylib — аргумент: ./driver <path-to-dylib>
 #include <dlfcn.h>
 #include <stdio.h>
+#include <string.h>
 #include <unistd.h>
 
 typedef const char *(*domain_for_t)(int);
@@ -52,7 +53,17 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    const char *res = fn(99); // 99 — неизвестное окружение -> без хука abort
-    printf("[driver] domain_for(99) = %s\n", res);
+    // env=0 — известное окружение. На merged хук делегирует оригиналу через ORIG,
+    // значит должен вернуться реальный prod-домен. Проверка возврат-трамплина.
+    const char *d0 = fn(0);
+    printf("[driver] domain_for(0)  = %s\n", d0);
+    if (!strstr(d0, "prod")) {
+        fprintf(stderr, "[driver] ORIG сломан: ожидал реальный prod-домен, получил '%s'\n", d0);
+        return 1;
+    }
+
+    // env=99 — неизвестное. Оригинал тут падает (SIGTRAP); хук возвращает fallback.
+    const char *d99 = fn(99);
+    printf("[driver] domain_for(99) = %s\n", d99);
     return 0;
 }

@@ -72,9 +72,10 @@ def main():
              "-o", target, os.path.join(HERE, "target.c")), "сборка target")
     check(["codesign", "-f", "-s", "-", target], "codesign target")
 
-    say("2/5 компилирую libhook.dylib (патч с магик-символами)")
+    say("2/5 компилирую libhook.dylib (патч с магик-символами + ORIG-стабы)")
     check(cc("-dynamiclib", *LDFLAGS, "-install_name", "@rpath/libhook.dylib",
-             "-o", hook, os.path.join(HERE, "hook.c")), "сборка hook")
+             "-o", hook, os.path.join(HERE, "hook.c"), os.path.join(HERE, "orig_stubs.S")),
+          "сборка hook")
 
     say("3/5 merge: target + hook -> libtarget_hooked.dylib")
     check([MERGER, target, hook, merged], "merge упал")
