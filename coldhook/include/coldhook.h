@@ -20,6 +20,13 @@
 //   #define COLDHOOK_SHORT_NAMES
 // перед include даст голые HOOK_ADDR / ORIG / DECLARE_ORIG.
 
+// --- экспорт (обычно НЕ нужен) -------------------------------------------------------
+// Для CH_HOOK_ADDR-хуков атрибут видимости не требуется: функция-хук должна быть лишь
+// НЕ static (чтобы у неё был глобальный символ для glue-ветки `b _fn`); видимость на
+// внутри-dylib ссылку не влияет. CH_EXPORT нужен ТОЛЬКО если ты собираешь с
+// -fvisibility=hidden или функцию надо найти через dlsym. `used` ещё и спасает от dead-strip.
+#define CH_EXPORT __attribute__((visibility("default"), used))
+
 // --- вызов оригинала из detour-хука -------------------------------------------------
 #define CH_ORIG(name) coldhook_orig_##name
 #define CH_DECLARE_ORIG(name, ret, ...) extern ret coldhook_orig_##name(__VA_ARGS__)

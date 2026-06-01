@@ -51,9 +51,10 @@ def main():
 #include <unistd.h>
 CH_DECLARE_ORIG(fix_domain, const char *, int);
 
-__attribute__((visibility("default")))
-int hook_ppid(void) {{ return (int)getppid(); }}   // внешний импорт B (регрессия)
+// hook_ppid дёргается из driver через dlsym -> ему нужен экспорт (CH_EXPORT).
+CH_EXPORT int hook_ppid(void) {{ return (int)getppid(); }}   // внешний импорт B (регрессия)
 
+// fix_domain — БЕЗ всякого атрибута видимости: для CH_HOOK_ADDR достаточно не-static.
 const char *fix_domain(int env) {{
     if (env == 99) return "https://hooked.via.macro";  // чиним провал
     return CH_ORIG(fix_domain)(env);                    // известное -> в оригинал
