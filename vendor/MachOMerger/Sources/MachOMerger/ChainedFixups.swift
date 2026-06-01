@@ -9,6 +9,65 @@ import Foundation
 import SwiftMachO
 import MachO
 
+// ColdHook: разобранная import-запись chained fixups (SwiftMachO отдаёт только имена,
+// а нам нужны lib_ordinal/weak для ремапа dylib-ordinals при merge внешних импортов B).
+struct ColdhookImport {
+    let libOrd: UInt16   // dylib ordinal (8 бит у format 1/2, 16 бит у format 3)
+    let weak: Bool
+    let name: String
+}
+
+func coldhookImportSize(_ format: UInt32) -> Int {
+    return format == 1 ? 4 : (format == 2 ? 8 : 16)
+}
+
+// Упорядоченный список путей LC_LOAD_DYLIB бинаря (1-based ordinal = index+1).
+func coldhookDylibPaths(_ machO: MachO) -> [String] {
+    var paths: [String] = []
+    for cmd in machO.cmds where cmd.type.rawValue == LC_LOAD_DYLIB {
+        guard let op = cmd as? OpaqueLoadCommand,
+              let nameOff = op.data.tryGetGeneric(type: UInt32.self, offset: 0) else {
+            paths.append("")
+            continue
+        }
+        // op.data — тело команды без 8-байтного заголовка; name_offset считается от начала
+        // команды (включая заголовок), поэтому в op.data строка лежит по nameOff-8.
+        let strStart = Int(nameOff) - 8
+        if strStart >= 0, strStart < op.data.count,
+           let s = try? op.data.advanced(by: strStart).toString(encoding: .utf8, nullTerminated: true) {
+            paths.append(s)
+        } else {
+            paths.append("")
+        }
+    }
+    return paths
+}
+
+// Разбор import-таблицы chained fixups. Поддержаны форматы 1/2 (u32: lib_ordinal:8,
+// weak:1, name_offset:23) и 3 (u64: lib_ordinal:16, weak:1, reserved:15, name_offset:32).
+func coldhookParseImports(importsBlob: Data, count: UInt32, format: UInt32, symbolsBlob: Data) -> [ColdhookImport] {
+    guard count > 0 else { return [] }
+    let size = coldhookImportSize(format)
+    var res: [ColdhookImport] = []
+    for i in 0..<Int(count) {
+        let libOrd: UInt16, weak: Bool, nameOff: Int
+        if format == 1 || format == 2 {
+            let raw = importsBlob.getGeneric(type: UInt32.self, offset: UInt(i * size))
+            libOrd  = UInt16(raw & 0xFF)
+            weak    = ((raw >> 8) & 1) == 1
+            nameOff = Int(raw >> 9)
+        } else { // format 3
+            let raw = importsBlob.getGeneric(type: UInt64.self, offset: UInt(i * size))
+            libOrd  = UInt16(raw & 0xFFFF)
+            weak    = ((raw >> 16) & 1) == 1
+            nameOff = Int(raw >> 32)
+        }
+        let name = (try? symbolsBlob.advanced(by: nameOff).toString(encoding: .utf8, nullTerminated: true)) ?? ""
+        res.append(ColdhookImport(libOrd: libOrd, weak: weak, name: name))
+    }
+    return res
+}
+
 func mergeChainedFixups(infoA: MachOMergeData, infoB: MachOMergeData, relocInfo: RelocInfo, machOA: MachO, machOB: MachO) -> Data {
     guard let cfA = infoA.chainedFixups else {
         print("No chained fixups! [A]")
@@ -44,8 +103,8 @@ func mergeChainedFixups(infoA: MachOMergeData, infoB: MachOMergeData, relocInfo:
     }
     
     let startsOffB     = cfB.getGeneric(type: UInt32.self, offset: 4)
-    //let importsOffB    = cfB.getGeneric(type: UInt32.self, offset: 8)
-    //let symsOffB       = cfB.getGeneric(type: UInt32.self, offset: 12)
+    let importsOffB    = cfB.getGeneric(type: UInt32.self, offset: 8)
+    let symsOffB       = cfB.getGeneric(type: UInt32.self, offset: 12)
     let importsCountB  = cfB.getGeneric(type: UInt32.self, offset: 16)
     let importsFormatB = cfB.getGeneric(type: UInt32.self, offset: 20)
     let symsFormatB    = cfB.getGeneric(type: UInt32.self, offset: 24)
@@ -65,79 +124,158 @@ func mergeChainedFixups(infoA: MachOMergeData, infoB: MachOMergeData, relocInfo:
         exit(-1)
     }*/
     
-    // ColdHook Step 1: импорты A больше НЕ запрещены. Бинды A в цепочках указывают на
-    // imports-таблицу A по ordinal'у; мы переносим эту таблицу (и symbols-пул) в выход
-    // вербатимом ниже, не трогая ordinal'ы. Слайд сегментов на бинды не влияет (бинды
-    // внешние, без адреса), а rebase'ы A чинит fixupViaSplitInfo. Поэтому здесь — ничего.
+    // ColdHook Step 1: импорты A сохраняются. Бинды A указывают на imports-таблицу A по
+    // ordinal'у; переносим её и symbols-пул A в выход вербатимом (бинды A не трогаем —
+    // слайд сегментов на них не влияет, rebase'ы A чинит fixupViaSplitInfo).
+    let importsSizeA   = coldhookImportSize(importsFormatA)
+    let importsBlobA   = (importsCountA == 0)
+        ? Data()
+        : cfA.subdata(in: Int(importsOffA)..<(Int(importsOffA) + Int(importsCountA) * importsSizeA))
+    let symbolsBlobA   = cfA.subdata(in: Int(symsOffA)..<cfA.count)
+
+    // ColdHook Step 2: внешние импорты B, которые НЕ резолвятся внутрь образа, остаются
+    // реальными биндами. Их dylib-ordinal ремапим на LC_LOAD_DYLIB таргета A (общий кейс:
+    // libSystem/Foundation/UIKit, которые A уже грузит), а import-запись + имя дописываем.
+    let aImports = coldhookParseImports(importsBlob: importsBlobA, count: importsCountA, format: importsFormatA, symbolsBlob: symbolsBlobA)
+    let aDylibs  = coldhookDylibPaths(machOA)
+    let bDylibs  = coldhookDylibPaths(machOB)
+
+    let importsSizeB = coldhookImportSize(importsFormatB)
+    let importsBlobB = (importsCountB == 0)
+        ? Data()
+        : cfB.subdata(in: Int(importsOffB)..<(Int(importsOffB) + Int(importsCountB) * importsSizeB))
+    let symbolsBlobB = cfB.subdata(in: Int(symsOffB)..<cfB.count)
+    let bImports = coldhookParseImports(importsBlob: importsBlobB, count: importsCountB, format: importsFormatB, symbolsBlob: symbolsBlobB)
+
+    // Состояние дозаписи merged-импортов (после import-таблицы A).
+    var appendedImports = Data()
+    var appendedSymbols = Data()
+    var appendedCount: UInt32 = 0
+    // dedup по ключу "aOrd|name" -> ordinal в merged-таблице (сидим импортами A).
+    var importIndex: [String: UInt32] = [:]
+    for (i, imp) in aImports.enumerated() {
+        importIndex["\(imp.libOrd)|\(imp.name)"] = UInt32(i)
+    }
+
+    // Маппинг внешнего импорта B (по ordinal'у его фиксапа) -> ordinal в merged-таблице.
+    // nil => не смогли (спец-ordinal, dylib не грузится таргетом, неподдержанный формат).
+    func mapExternalImport(bOrdinal: UInt32) -> UInt32? {
+        guard Int(bOrdinal) < bImports.count else { return nil }
+        let imp = bImports[Int(bOrdinal)]
+        guard imp.libOrd >= 1, Int(imp.libOrd) <= bDylibs.count else { return nil } // только нормальные ordinals
+        let dylibName = bDylibs[Int(imp.libOrd) - 1]
+        guard let aIdx = aDylibs.firstIndex(of: dylibName) else {
+            // dylib нет в LC_LOAD_DYLIB таргета -> нужна вставка load command (2c, отложено)
+            print("ColdHook: dylib '\(dylibName)' для импорта B '\(imp.name)' не загружается таргетом — нужна вставка LC_LOAD_DYLIB (пока не реализовано)")
+            return nil
+        }
+        let aOrd = UInt8(aIdx + 1)
+        let key = "\(aOrd)|\(imp.name)"
+        if let existing = importIndex[key] { return existing }
+        guard importsFormatA == 1 else {
+            print("ColdHook: дозапись импортов поддержана только для format 1")
+            return nil
+        }
+        let newNameOff = UInt32(symbolsBlobA.count + appendedSymbols.count)
+        let raw = UInt32(aOrd) | (imp.weak ? 0x100 : 0) | (newNameOff << 9)
+        appendedImports.appendGeneric(value: raw)
+        appendedSymbols.append(imp.name.data(using: .utf8)!)
+        appendedSymbols.append(0) // null terminator
+        let newOrd = importsCountA + appendedCount
+        appendedCount += 1
+        importIndex[key] = newOrd
+        return newOrd
+    }
 
     if importsCountB != 0 {
-        // Need to walk chain
         let cf = try! b.getChainedFixups()
         let symTable = try! a.getSymbolTable()
-        try! cf.forEachFixup({ location, vAddr, content in
-            if case .authBind(ordinal: _, diversity: let diversity, addrDiv: let addrDiv, key: let key, next: let next) = content {
-                let segment = relocInfo.segment(forOrigAddress: location, isB: true)!
-                let off = Int(segment.3)
-                var data = segment.1
-                let dat = data.getGeneric(type: UInt64.self, offset: UInt(segment.3))
-                guard dat == content.rawValue else {
-                    print("XXX: ChainedFixups .authBind err!")
-                    exit(-1)
+
+        // Резолв импорта B внутрь образа (магик-символ или symtab таргета A).
+        func resolveInternal(_ sym: String) -> (addr: UInt64, isB: Bool)? {
+            if let d = getMagicSymbolVal(sym) { return (d.0, d.1) }
+            if let d = symTable.symbol(forName: sym) { return (d.value, false) }
+            return nil
+        }
+        func writeFixup(loc: UInt64, raw: UInt64) {
+            let segment = relocInfo.segment(forOrigAddress: loc, isB: true)!
+            let off = Int(segment.3)
+            var data = segment.1
+            data = data.subdata(in: 0..<off) + Data(fromObject: raw) + data.subdata(in: (off + 8)..<data.count)
+            relocInfo.replaceSegment(name: segment.0, isB: true, data: data)
+        }
+
+        // Семейство формата (берём из первого сегмента со стартами).
+        let fmt = cf.startsInSegment.compactMap { $0 }.first?.pointerFormat ?? 0
+
+        if fmt == 1 || fmt == 12 {
+            // --- arm64e (1, 12): обход и кодировка через SwiftMachO ChainTarget, шаг 8 ---
+            try! cf.forEachFixup({ location, vAddr, content in
+                if case .authBind(ordinal: let ord, diversity: let diversity, addrDiv: let addrDiv, key: let key, next: let next) = content {
+                    let sym = cf.symbol(forFixup: content)!
+                    let nr: UInt64
+                    if let r = resolveInternal(sym) {
+                        nr = ChainedFixups.ChainedStartsInSegment.ChainTarget.authRebase(target: UInt32(relocInfo.translate(address: r.addr, isB: r.isB)), diversity: diversity, addrDiv: addrDiv, key: key, next: next).rawValue
+                    } else if let newOrd = mapExternalImport(bOrdinal: ord) {
+                        nr = ChainedFixups.ChainedStartsInSegment.ChainTarget.authBind(ordinal: newOrd, diversity: diversity, addrDiv: addrDiv, key: key, next: next).rawValue
+                    } else { print("ColdHook: импорт B '\(sym)' не резолвится/не мерджится"); exit(-1) }
+                    writeFixup(loc: location, raw: nr)
+                } else if case .bind(ordinal: let ord, addend: let addend, next: let next) = content {
+                    let sym = cf.symbol(forFixup: content)!
+                    let nr: UInt64
+                    if let r = resolveInternal(sym) {
+                        nr = ChainedFixups.ChainedStartsInSegment.ChainTarget.rebase(target: relocInfo.translate(address: r.addr, isB: r.isB), high8: 0, next: next).rawValue
+                    } else if let newOrd = mapExternalImport(bOrdinal: ord) {
+                        nr = ChainedFixups.ChainedStartsInSegment.ChainTarget.bind(ordinal: newOrd, addend: addend, next: next).rawValue
+                    } else { print("ColdHook: импорт B '\(sym)' не резолвится/не мерджится"); exit(-1) }
+                    writeFixup(loc: location, raw: nr)
                 }
-                
-                guard let sym = cf.symbol(forFixup: content) else {
-                    print("Couldn't find symbol in imports table!")
-                    exit(-1)
+                // rebase/authRebase B чинит fixupViaSplitInfo — здесь не трогаем
+            })
+        } else if fmt == 2 || fmt == 6 {
+            // --- arm64 (2 = DYLD_CHAINED_PTR_64, 6 = _64_OFFSET): свой обход, шаг 4 байта ---
+            // Структуру цепочки читаем из ОРИГИНАЛА B (бинды split-info не трогает),
+            // переписанные бинды пишем в выходной сегмент через relocInfo.
+            let bSegs = machOB.cmds.compactMap { $0 as? Segment64LoadCommand }
+            for (segIdx, startsOpt) in cf.startsInSegment.enumerated() {
+                guard let starts = startsOpt, segIdx < bSegs.count else { continue }
+                let segLC = bSegs[segIdx]
+                let pageSize = Int(starts.pageSize)
+                for pageIndex in 0..<starts.pageStarts.count {
+                    let ps = starts.pageStarts[pageIndex]
+                    if ps == 0xFFFF { continue }                       // START_NONE
+                    guard ps & 0x8000 == 0 else { print("ColdHook: multi-chain страницы не поддержаны"); exit(-1) }
+                    var curFileOff = Int(starts.segOffset) + pageIndex * pageSize + Int(ps)
+                    while true {
+                        let content = machOB.data.getGeneric(type: UInt64.self, offset: UInt(curFileOff))
+                        let next  = (content >> 51) & 0x7FF
+                        let isBnd = (content >> 63) & 1 == 1
+                        if isBnd {
+                            let ord    = UInt32(content & 0xFFFFFF)     // ordinal: 24 бита
+                            let addend = UInt32((content >> 24) & 0xFF) // addend: 8 бит
+                            guard Int(ord) < cf.imports.count else { print("ColdHook: bind ordinal \(ord) вне imports B"); exit(-1) }
+                            let sym = cf.imports[Int(ord)]
+                            let loc = segLC.vmAddr &+ UInt64(curFileOff) &- segLC.fileOffset
+                            let nr: UInt64
+                            if let r = resolveInternal(sym) {
+                                // внутренний резолв -> rebase (формат 64: target = offset от базы, база 0)
+                                let t = relocInfo.translate(address: r.addr, isB: r.isB)
+                                nr = (t & 0xFFFFFFFFF) | (((t >> 36) & 0xFF) << 36) | (next << 51) // bit63=0
+                            } else if let newOrd = mapExternalImport(bOrdinal: ord) {
+                                // внешний импорт -> bind с merged-ordinal (формат 64 bind layout)
+                                nr = (UInt64(newOrd) & 0xFFFFFF) | (UInt64(addend) << 24) | (next << 51) | (UInt64(1) << 63)
+                            } else { print("ColdHook: импорт B '\(sym)' не резолвится/не мерджится"); exit(-1) }
+                            writeFixup(loc: loc, raw: nr)
+                        }
+                        if next == 0 { break }
+                        curFileOff += Int(next) * 4
+                    }
                 }
-                
-                var isB = false
-                var dst: UInt64!
-                if let d = getMagicSymbolVal(sym) {
-                    dst = d.0
-                    isB = d.1
-                } else if let d = symTable.symbol(forName: sym) {
-                    dst = d.value
-                }
-                
-                guard dst != nil else {
-                    print("Cannot resolve symbol \(sym)!")
-                    exit(-1)
-                }
-                
-                let new = ChainedFixups.ChainedStartsInSegment.ChainTarget.authRebase(target: UInt32(relocInfo.translate(address: dst, isB: isB)), diversity: diversity, addrDiv: addrDiv, key: key, next: next)
-                data = data.subdata(in: 0..<off) + Data(fromObject: new.rawValue) + data.subdata(in: (off+8)..<data.count)
-                relocInfo.replaceSegment(name: segment.0, isB: true, data: data)
-            } else if case .bind(ordinal: _, addend: _, next: let next) = content {
-                let segment = relocInfo.segment(forOrigAddress: location, isB: true)!
-                let off = Int(segment.3)
-                var data = segment.1
-                let dat = data.getGeneric(type: UInt64.self, offset: UInt(segment.3))
-                guard dat == content.rawValue else {
-                    print("XXX: ChainedFixups .bind err!")
-                    exit(-1)
-                }
-                
-                let sym = cf.symbol(forFixup: content)!
-                
-                var isB = false
-                var dst: UInt64!
-                if let d = getMagicSymbolVal(sym) {
-                    dst = d.0
-                    isB = d.1
-                } else if let d = symTable.symbol(forName: sym) {
-                    dst = d.value
-                }
-                
-                guard dst != nil else {
-                    print("Cannot resolve symbol \(sym)!")
-                    exit(-1)
-                }
-                
-                let new = ChainedFixups.ChainedStartsInSegment.ChainTarget.rebase(target: relocInfo.translate(address: dst, isB: isB), high8: 0, next: next)
-                data = data.subdata(in: 0..<off) + Data(fromObject: new.rawValue) + data.subdata(in: (off+8)..<data.count)
-                relocInfo.replaceSegment(name: segment.0, isB: true, data: data)
             }
-        })
+        } else {
+            print("ColdHook: неподдержанный pointer_format \(fmt) у B")
+            exit(-1)
+        }
     }
     
     // Okay, we only have to fix the starts
@@ -289,15 +427,13 @@ func mergeChainedFixups(infoA: MachOMergeData, infoB: MachOMergeData, relocInfo:
     
     var startsSegData = starts + segData
 
-    // ColdHook Step 1: переносим imports-таблицу и symbols-пул A вербатимом.
-    //  - importsBlobA = cfA[importsOffA ..< symsOffA]  (массив импортов + возможный pad);
-    //  - symbolsBlobA = cfA[symsOffA ..< end]          (строковый пул).
-    // name_offset'ы импортов считаются ОТ symsOff, поэтому пока imports и symbols идут
-    // подряд (как в A), смещения остаются валидными независимо от их позиции в блобе.
-    let importsBlobA = (importsCountA == 0)
-        ? Data()
-        : cfA.subdata(in: Int(importsOffA)..<Int(symsOffA))
-    let symbolsBlobA = cfA.subdata(in: Int(symsOffA)..<cfA.count)
+    // ColdHook: merged imports = import-таблица A (вербатим, ordinal'ы 0..countA-1)
+    // + дозаписанные внешние импорты B (ordinal'ы countA..). merged symbols = пул A
+    // + имена дозаписанных импортов. name_offset'ы считаются от symsOff, поэтому пул A
+    // переносится как есть, а новые имена идут после него.
+    let importsBlobOut  = importsBlobA + appendedImports
+    let symbolsBlobOut  = symbolsBlobA + appendedSymbols
+    let importsCountOut = importsCountA + appendedCount
 
     // imports выравниваем на 8 байт (покрывает все import-форматы, включая addend64).
     let baseOff     = 32 + startsSegData.count
@@ -305,7 +441,7 @@ func mergeChainedFixups(infoA: MachOMergeData, infoB: MachOMergeData, relocInfo:
     if importsOff > baseOff {
         startsSegData.append(Data(repeating: 0, count: importsOff - baseOff))
     }
-    let symsOff = importsOff + importsBlobA.count
+    let symsOff = importsOff + importsBlobOut.count
 
     var newChainedFixups = Data()
 
@@ -314,15 +450,21 @@ func mergeChainedFixups(infoA: MachOMergeData, infoB: MachOMergeData, relocInfo:
     newChainedFixups.appendGeneric(value: 32 as UInt32)            // startsOff
     newChainedFixups.appendGeneric(value: UInt32(importsOff))      // importsOff
     newChainedFixups.appendGeneric(value: UInt32(symsOff))         // symsOff
-    newChainedFixups.appendGeneric(value: importsCountA)           // importsCount (А сохранены)
+    newChainedFixups.appendGeneric(value: importsCountOut)         // importsCount (A + внешние B)
     newChainedFixups.appendGeneric(value: importsFormatA)          // importsFormat
     newChainedFixups.appendGeneric(value: symsFormatA)             // symsFormat
     newChainedFixups.appendGeneric(value: 0 as UInt32)             // pad
 
-    // Emit data: starts(+pad) -> imports A -> symbols A
+    // Emit data: starts(+pad) -> imports(A+B) -> symbols(A+B)
     newChainedFixups.append(startsSegData)
-    newChainedFixups.append(importsBlobA)
-    newChainedFixups.append(symbolsBlobA)
+    newChainedFixups.append(importsBlobOut)
+    newChainedFixups.append(symbolsBlobOut)
+
+    // Выравниваем весь блок до 8 байт: иначе следующая за ним в __LINKEDIT symtab
+    // окажется mis-aligned (dyld терпит, но dyld_info/строгие загрузчики ругаются).
+    while newChainedFixups.count % 8 != 0 {
+        newChainedFixups.append(0)
+    }
 
     return newChainedFixups
 }

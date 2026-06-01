@@ -33,10 +33,16 @@ def fail(msg):
     sys.exit(1)
 
 
-def run(cmd, **kw):
-    """Запуск с выводом команды; возвращает CompletedProcess (без проверки кода)."""
+def run(cmd, timeout=None, **kw):
+    """Запуск с выводом команды; возвращает CompletedProcess (без проверки кода).
+    При таймауте возвращает объект с returncode=124 (как timeout(1)) — чтобы кривой
+    merged-бинарь, заставивший dyld крутить цепочку фиксапов, не подвесил сессию."""
     print("  $ " + " ".join(cmd))
-    return subprocess.run(cmd, **kw)
+    try:
+        return subprocess.run(cmd, timeout=timeout, **kw)
+    except subprocess.TimeoutExpired:
+        print(f"  !! таймаут {timeout}s — процесс убит")
+        return subprocess.CompletedProcess(cmd, 124)
 
 
 def check(cmd, what):
@@ -79,10 +85,10 @@ def main():
 
     say("5/5 прогон")
     print("--- БЕЗ хука (ожидаем abort) ---")
-    rc0 = run([driver, target]).returncode
+    rc0 = run([driver, target], timeout=10).returncode
     print(f"  exit={rc0}")
     print("--- С хуком (ожидаем валидный домен) ---")
-    rc1 = run([driver, merged]).returncode
+    rc1 = run([driver, merged], timeout=10).returncode
     print(f"  exit={rc1}")
 
     if rc1 == 0:
