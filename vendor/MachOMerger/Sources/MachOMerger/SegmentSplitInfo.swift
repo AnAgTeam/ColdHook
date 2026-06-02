@@ -175,6 +175,21 @@ func processSplitInfo(_ reader: ULEB128Reader, relocInfo: RelocInfo, isB: Bool) 
                         fromSection = fromSection[0..<Int(fromSectionOffset)] + Data(fromObject: new) + fromSection[Int(fromSectionOffset + 4)...]
                         break
 
+                    case 3:
+                        // DYLD_CACHE_ADJ_V2_DELTA_32 — относительная ссылка (Swift relative pointer):
+                        // значение = target - source. При перемещении правим на разницу перемещений.
+                        let loc = fromSection.getGeneric(type: UInt32.self, offset: UInt(fromSectionOffset))
+                        let adjust = (toAddr &- toAddrOld) &- (fromAddr &- fromAddrOld)
+                        let new = loc &+ UInt32(truncatingIfNeeded: adjust)
+                        fromSection = fromSection[0..<Int(fromSectionOffset)] + Data(fromObject: new) + fromSection[Int(fromSectionOffset + 4)...]
+
+                    case 4:
+                        // DYLD_CACHE_ADJ_V2_DELTA_64 — то же, 64-битная относительная дельта.
+                        let loc = fromSection.getGeneric(type: UInt64.self, offset: UInt(fromSectionOffset))
+                        let adjust = (toAddr &- toAddrOld) &- (fromAddr &- fromAddrOld)
+                        let new = loc &+ adjust
+                        fromSection = fromSection[0..<Int(fromSectionOffset)] + Data(fromObject: new) + fromSection[Int(fromSectionOffset + 8)...]
+
                     case 5:
                         let adrp = fromSection.getGeneric(type: UInt32.self, offset: UInt(fromSectionOffset))
                         let new = ssiFixAdrp(adrp: adrp, at: fromAddr, to: toAddr)
@@ -214,19 +229,19 @@ func processSplitInfo(_ reader: ULEB128Reader, relocInfo: RelocInfo, isB: Bool) 
 }
 
 func fixupViaSplitInfo(infoA: MachOMergeData, infoB: MachOMergeData, relocInfo: RelocInfo) {
-    guard let splitInfoA = infoA.splitInfo else {
-        print("No LC_SEGMENT_SPLIT_INFO in A!")
-        exit(-1)
+    // ColdHook: в append-режиме таргет A не двигаем (offset 0) — его фиксапы валидны как есть,
+    // split-info от A не нужен. Чиним только B.
+    if !coldhookAppendMode {
+        guard let splitInfoA = infoA.splitInfo else {
+            print("No LC_SEGMENT_SPLIT_INFO in A!")
+            exit(-1)
+        }
+        processSplitInfo(ULEB128Reader(data: splitInfoA), relocInfo: relocInfo, isB: false)
     }
-    
+
     guard let splitInfoB = infoB.splitInfo else {
-        print("No LC_SEGMENT_SPLIT_INFO in A!")
+        print("No LC_SEGMENT_SPLIT_INFO in B!")
         exit(-1)
     }
-    
-    let readerA = ULEB128Reader(data: splitInfoA)
-    let readerB = ULEB128Reader(data: splitInfoB)
-    
-    processSplitInfo(readerA, relocInfo: relocInfo, isB: false)
-    processSplitInfo(readerB, relocInfo: relocInfo, isB: true)
+    processSplitInfo(ULEB128Reader(data: splitInfoB), relocInfo: relocInfo, isB: true)
 }
