@@ -8,10 +8,17 @@ MachOMerger), без рантайм-кодогенерации и W^X-перех
 ## Структура
 
 ```
+coldhook/             Python-оркестратор (info | merge | patch | ipa)
+coldhook/include/     coldhook.h — макросы хука (CH_HOOK_ADDR / CH_HOOK_SYM / CH_ORIG)
+scripts/              build_install.py — сборка → merge → resign → установка на устройство
+tests/macos/          запускаемые macOS-харнессы (arm64) — полигоны без устройства
+tests/hooks/          готовые сэмплы хука (swift_replace, export_byname, hook_byaddr)
+tests/TestApp/        ObjC тест-приложение (мишень)
+tests/TestSwiftApp/   Swift тест-приложение (мишень)
+docs/                 swift-dsl.md — дизайн будущего @Hook DSL
 vendor/MachOMerger/   форк движка слияния (Dopamine 2.x, MIT) + правки ColdHook
 vendor/dyldhook/      референс макросов HOOK()/ORIG()
-tests/macos/          локальные macOS-харнессы (arm64) — dev-полигоны без устройства
-coldhook/             Python-оркестратор (info | merge | patch | ipa)
+coldhook_plan.md      подробный план; coldhook.toml — пример конфига; LICENSE — MIT
 ```
 
 ## Локальные харнессы (macOS arm64, без устройства)
