@@ -2,8 +2,9 @@
 
 Статический «холодный» хук iOS-бинарей через **слияние** хук-кода в таргет (на базе
 MachOMerger), без рантайм-кодогенерации и W^X-переходов. Хуки — **по символам**
-(`HOOK(name)`/`ORIG(name)`) и **по оффсету** (`CH_HOOK_ADDR(off, fn)` для стрипнутых
-бинарей), без интеграции Logos. Подробный план — `coldhook_plan.md`.
+(`CH_HOOK_SYM`), **по оффсету** (`CH_HOOK_ADDR` для стрипнутых) и **гейтируемые**
+(`*_GATED`, рантайм-переключаемые). Есть **Logos-интеграция** (пиши твики, ставь статикой —
+см. ниже) и Swift-хуки. Подробный план — `coldhook_plan.md`.
 
 ## Структура
 
@@ -94,6 +95,51 @@ CH_HOOK_ADDR(0xb99a8, fix_domain);
 в `__builtin_trap()` (модель `assertionFailure`). Хук чинит провальный путь, известное
 делегирует оригиналу через `ORIG`.
 
+### Гейтируемые хуки (статически установлен, рантайм-переключаемый)
+
+`CH_HOOK_SYM_GATED(sym, fn)` / `CH_HOOK_ADDR_GATED(off, fn)` — хук впечён в бинарь, но первая
+инструкция цели ведёт на тонкий thunk через указатель в писчем `__DATA`. Дефолт = ORIG (хук
+ВЫКЛ, цель работает прозрачно); рантайм-флип включает — без W^X, атомарной записью указателя:
+
+```c
+CH_DECLARE_GATE(fix);
+CH_HOOK_SYM_GATED("target_fn", fix);
+__attribute__((constructor)) static void init(void) {
+    if (setting_enabled()) CH_GATE_ENABLE(fix);   // иначе остаётся ORIG (выкл)
+}
+```
+
+Под капотом групп Logos (`%init(Group)`) и тоглов твика из настроек. Сэмпл — `tests/macos/run_gated.py`.
+
+## Logos-интеграция (ColdTheos): пиши твики, ставь статикой
+
+Привычный theos-воркфлоу, но бэкенд — статический merge ColdHook (без джейлбрейка/W^X).
+`%hookf` (хук C-функции) и `%ctor` едут статикой; `%group` даёт гейтируемый хук.
+
+```bash
+python3 -m coldhook install-theos     # один раз: NIC-шаблон «ColdHook Tweak» в $THEOS
+nic.pl                                # выбери «ColdHook Tweak» -> проект с Tweak.x
+make                                  # -> .theos/obj/.../<Name>.dylib  (пре-пасс внутри)
+python3 -m coldhook merge --target <bin> --src <dylib> --out <patched>   # инжект отдельно
+```
+
+Пишешь только `Tweak.x` обычным Logos. На `make` ColdHook-пре-пасс (`coldhook/logos_prepass.py`)
+переводит `%hookf` в статический glue (`.coldhook/Tweak.xm`), а остальное (ObjC, `%ctor`,
+`%group`/`%init`) отдаёт **стоковому** `logos.pl` — тот уже не генерит рантайм `MSHookFunction`
+(= инлайн-патч кода = W^X, которого в сайдлоаде нет).
+
+| Конструкт Logos | Бэкенд ColdHook |
+|---|---|
+| `%hookf` | статика — `CH_HOOK_SYM`, патч 1-й инструкции на merge; `%orig` -> `CH_ORIG` |
+| `%hookf` в `%group` | гейтируемый — включается рантаймом на `%init(Group)` |
+| `%ctor` / `%orig` | как обычно (конструктор сливается через `__init_offsets`) |
+| ObjC `%hook` | компилится (шим `MSHookMessageEx`), но через merge ПОКА не активен — приедет с shared-режимом |
+
+Граница: синтаксис/`nic`/`make`/ObjC-свизл — за theos; статическая установка — за ColdHook
+(тонкая прослойка: пре-пасс + substrate-шим `coldhook/substrate/` + `install-theos`, не форк).
+Пример — `tests/hooks/logos_tweak/`; запускаемый прогон (пре-пасс + сток-logos + merge) —
+`tests/macos/run_logos.py`.
+
 ## Оркестратор (Python)
 
 Интроспекция Mach-O → сборка хука под платформу таргета → merge → (опц.) resign.
@@ -130,7 +176,13 @@ python3 -m coldhook ipa    <in.ipa|.app> -c cfg -o <out>       # merge в бан
 - [x] Merge в главный бинарь (MH_EXECUTE): `__PAGEZERO` verbatim, база 0x100000000, `LC_MAIN`/`LC_LOAD_DYLINKER`, флаги заголовка
 - [x] Конструкторы (`%ctor`/`__attribute__((constructor))`) у хука И таргета: слияние `__TEXT,__init_offsets` A+B в одну секцию (dyld4 не терпит две)
 - [x] Общий внешний импорт таргета и хука (`write`, Foundation и т.п.): резолв в symtab A только по DEFINED-символам -> bind, а не rebase в мусор
-- [ ] exports trie / multi-chain / FAT для arm64e на устройстве / многоинструкционный ORIG (PC-relative пролог)
+- [x] Append-режим: хуки в РЕАЛЬНЫЕ бинари без `LC_SEGMENT_SPLIT_INFO` (A не двигаем, B аппендом); проверено на устройстве. Выбор `--mode auto\|append\|interleave`
+- [x] Swift-хуки: by-name (мангл) + by-offset + ORIG с переэнкодом PC-relative пролога (`cbz`/`adrp`/…)
+- [x] Гейтируемые хуки (`CH_HOOK_SYM_GATED`/`*_ADDR_GATED`): статически установлен, рантайм-переключаемый (thunk через указатель в `__DATA`, дефолт = ORIG)
+- [x] Logos-интеграция (ColdTheos): `%hookf`/`%ctor`/`%group` статикой через пре-пасс + сток-logos; NIC-шаблон + `install-theos`; substrate-шим
+- [x] Робастность мёрджера на debug/STABS-dylib (theos `make`): STAB не путается с реальными символами
+- [ ] ObjC `%hook` через merge (selref'ы B не уникаются в append) — придёт с shared-режимом
+- [ ] exports trie / multi-chain / FAT для arm64e на устройстве / Swift `@Hook`-фасад (`docs/swift-dsl.md`)
 
 ## Лицензии
 
