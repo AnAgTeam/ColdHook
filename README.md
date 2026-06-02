@@ -122,4 +122,8 @@ python3 -m coldhook ipa    <in.ipa|.app> -c cfg -o <out>       # merge в бан
 
 ## Лицензии
 
-Завендоренный код — MIT (Dopamine, © opa334). См. `vendor/LICENSE-Dopamine.md` и `vendor/NOTICE.md`.
+Проект — **MIT** (см. `LICENSE`), покрывает собственный код ColdHook (`coldhook/`, `scripts/`,
+`tests/`, `docs/`, файлы верхнего уровня).
+
+Завендоренный код в `vendor/` — тоже MIT, но под своей лицензией (Dopamine, © 2023–2024 opa334;
+движок MachOMerger — Linus Henze). См. `vendor/LICENSE-Dopamine.md` и `vendor/NOTICE.md`.
