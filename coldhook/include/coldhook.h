@@ -63,9 +63,39 @@
 // доступен); для полного replace просто не зови CH_ORIG.
 #define CH_HOOK_ADDR(off, fn) CH__STUB(off, fn)
 
+// --- регистрация хука ПО ИМЕНИ СИМВОЛА -----------------------------------------------
+// Для целей, у которых есть символ (в т.ч. Swift-мангл). sym — СТРОКОВЫЙ литерал имени БЕЗ
+// ведущего подчёркивания, как в `nm <binary>` после `_`:
+//   nm app | grep url   ->  _$s12MyApp3url3forS2S_tF   ->  sym = "$s12MyApp3url3forS2S_tF"
+// Мёрджер резолвит символ в symtab таргета (defined, N_SECT) и патчит его первую инструкцию.
+// ORIG работает так же, как у CH_HOOK_ADDR (PC-relative пролог переэнкодится мёрджером).
+// Swift-хук: замена и оригинал — Swift-функции с тем же ABI через @_silgen_name:
+//   @_silgen_name("ch_url") func chURL(_ d: String) -> String { ... ch_orig_url(d) }
+//   @_silgen_name("coldhook_orig_ch_url") func ch_orig_url(_ d: String) -> String
+//   // в .c рядом:  CH_HOOK_SYM("$s12MyApp3url3forS2S_tF", ch_url);
+#define CH__STUB_SYM(sym, fn) \
+  __asm__( \
+    ".text\n.p2align 2\n" \
+    ".globl _MACHOMERGER_HOOK_" sym "\n" \
+    ".no_dead_strip _MACHOMERGER_HOOK_" sym "\n" \
+    "_MACHOMERGER_HOOK_" sym ":\n    b _" #fn "\n" \
+    ".globl _MACHOMERGER_ORIG_" sym "\n" \
+    ".no_dead_strip _MACHOMERGER_ORIG_" sym "\n" \
+    "_MACHOMERGER_ORIG_" sym ":\n    brk #0\n" \
+    ".globl _MACHOMERGER_HOOKTRAMPOLINE_" sym "\n" \
+    ".no_dead_strip _MACHOMERGER_HOOKTRAMPOLINE_" sym "\n" \
+    "_MACHOMERGER_HOOKTRAMPOLINE_" sym ":\n    brk #0\n" \
+    ".globl _coldhook_orig_" #fn "\n" \
+    "_coldhook_orig_" #fn ":\n    b _MACHOMERGER_ORIG_" sym "\n" \
+    ".section __DATA_CONST,__const\n.p2align 3\n" \
+    "_coldhook_anchor_sym_" #fn ":\n    .quad _MACHOMERGER_HOOK_" sym "\n" \
+  )
+#define CH_HOOK_SYM(sym, fn) CH__STUB_SYM(sym, fn)
+
 // --- опциональные короткие алиасы ----------------------------------------------------
 #ifdef COLDHOOK_SHORT_NAMES
   #define HOOK_ADDR(off, fn)            CH_HOOK_ADDR(off, fn)
+  #define HOOK_SYM(sym, fn)             CH_HOOK_SYM(sym, fn)
   #define ORIG(name)                    CH_ORIG(name)
   #define DECLARE_ORIG(name, ret, ...)  CH_DECLARE_ORIG(name, ret, __VA_ARGS__)
 #endif
