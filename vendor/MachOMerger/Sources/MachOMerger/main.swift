@@ -20,9 +20,33 @@ let pageMask: UInt64    = ~pageMaskOff
 let coldhookAllowNewDylibs = CommandLine.arguments.contains("--allow-new-dylibs")
 var coldhookNewDylibCmds: [Data] = []   // сырые LC_LOAD_DYLIB для дозаписи (заполняет merge)
 
-let coldhookPosArgs = CommandLine.arguments.dropFirst().filter { !$0.hasPrefix("--") }
+// ColdHook: --mode auto|append|interleave (дефолт auto). Резолв в coldhookAppendMode ниже
+// (после разбора A), здесь — только вытащить значение. Поддержаны обе формы: --mode append и
+// --mode=append. В первой значение НЕ должно попасть в позиционные args — съедаем его явно.
+func coldhookFlagValue(_ name: String) -> String? {
+    let args = Array(CommandLine.arguments)
+    for (i, arg) in args.enumerated() {
+        if arg == name && i + 1 < args.count { return args[i + 1] }            // --mode append
+        if arg.hasPrefix(name + "=") { return String(arg.dropFirst(name.count + 1)) } // --mode=append
+    }
+    return nil
+}
+let coldhookModeArg = (coldhookFlagValue("--mode") ?? "auto").lowercased()
+guard ["auto", "append", "interleave"].contains(coldhookModeArg) else {
+    print("Unknown --mode '\(coldhookModeArg)'. Use: auto | append | interleave")
+    exit(-1)
+}
+
+var coldhookPosArgs: [String] = []
+var coldhookSkipNext = false
+for arg in CommandLine.arguments.dropFirst() {
+    if coldhookSkipNext { coldhookSkipNext = false; continue }   // значение --mode <val>
+    if arg == "--mode" { coldhookSkipNext = true; continue }
+    if arg.hasPrefix("--") { continue }                         // прочие флаги (--allow-new-dylibs)
+    coldhookPosArgs.append(arg)
+}
 guard coldhookPosArgs.count == 3 else {
-    print("Usage: MachOMerger <a> <b> <out> [--allow-new-dylibs]")
+    print("Usage: MachOMerger <a> <b> <out> [--allow-new-dylibs] [--mode auto|append|interleave]")
     exit(-1)
 }
 
@@ -206,7 +230,23 @@ let coldhookBase: UInt64 = coldhookHasPageZero
 // фиксапы/symtab/entry валидны как есть), а сегменты хука B аппендим ПОСЛЕ A на новые vmaddr'ы.
 // Заголовок переписываем в пределах существующего padding A (между LC и первой секцией).
 // B (наш хук) собираем сами и ВСЕГДА со split-info — его релоцируем штатно.
-let coldhookAppendMode = (dataA.splitInfo == nil)
+// ColdHook: режим слияния. auto -> по split-info цели (нет split-info => append, иначе interleave).
+// append форсит дозапись (работает на любой цели). interleave форсит стелс-слияние и ПАДАЕТ, если
+// у цели нет split-info — релоцировать её сегменты нечем (тихий фолбэк маскировал бы ошибку выбора).
+let coldhookAppendMode: Bool
+switch coldhookModeArg {
+case "append":
+    coldhookAppendMode = true
+case "interleave":
+    guard dataA.splitInfo != nil else {
+        print("--mode interleave невозможен: у цели нет LC_SEGMENT_SPLIT_INFO (релоцировать нечем). "
+            + "Используй --mode auto или --mode append.")
+        exit(-1)
+    }
+    coldhookAppendMode = false
+default:   // auto
+    coldhookAppendMode = (dataA.splitInfo == nil)
+}
 if coldhookAppendMode && dataB.splitInfo == nil {
     print("ColdHook: append-режим (таргет A без split-info), но и у хука B нет split-info. "
         + "Пересобери хук с -Xlinker -add_split_seg_info.")
