@@ -1,46 +1,46 @@
-# swift_replace — хук Swift-функции по оффсету (PoC, проверен на iPhone)
+# swift_replace — хук Swift-метода: by-name + ORIG (PoC, проверен на iPhone)
 
-Замена Swift-метода `url(for:) -> String` в `TestSwiftApp` (мишень №2, см.
-`tests/TestSwiftApp/.../ContentView.swift`): в `default` она уходит в
-`preconditionFailure` (краш по тапу). Хук уводит цель в Swift-замену с тем же ABI,
-краш исчезает, вместо него возвращается строка. `ctor.c` логирует факт загрузки.
+Хук чистого Swift-метода `url(for:) -> String` в `TestSwiftApp` (мишень №2,
+`tests/TestSwiftApp/.../ContentView.swift`): в `default` он уходит в `preconditionFailure`
+(краш по тапу). Хук для известного домена зовёт **оригинал** (`CH_ORIG`), а для остального
+возвращает фолбэк — краша больше нет. `ctor.c` логирует факт загрузки в Console.
 
-Почему так: Swift `(String) -> String` нельзя выразить C-функцией (`@_cdecl` не умеет
-Swift String). Поэтому замена — Swift-функция с тем же ABI + фиксированный символ через
-`@_silgen_name`, а магик-символ ColdHook по оффсету (`_COLDHOOK_ADDR_<hex>`) — асм-стаб,
-тейл-ветвящийся в неё. Symtab реального Swift-бинаря SwiftMachO не парсит, поэтому хук
-именно ПО ОФФСЕТУ (магик-адрес), а не по имени символа.
+Почему так: Logos берёт только `@objc dynamic` Swift-методы (есть селектор, `String`↔`NSString`).
+Чистый Swift зовётся по Swift-ABI напрямую — swizzlить нечего. ColdHook патчит статически.
+Замена и оригинал — Swift-функции с тем же ABI через `@_silgen_name` (Swift `String` нельзя
+вернуть из C/`@_cdecl` — это value-тип). Symtab реального Swift-бинаря SwiftMachO не парсит,
+но мёрджер резолвит цель сырым разбором symtab — поэтому by-name работает.
 
-## Сборка (iOS arm64)
+Файлы:
+- `hook.swift` — Swift-замена + объявление оригинала (`@_silgen_name`).
+- `glue.c` — навешивает магик-символы: `CH_HOOK_SYM` (по имени, рекомендуется) или
+  `CH_HOOK_ADDR` (по адресу). Генерит и ORIG-слот, и alias `_coldhook_orig_ch_url`.
+- `ctor.c` — probe-конструктор (`syslog`), виден в Console по фильтру `coldhook`.
+
+## Имя/адрес цели — под свою сборку
+
+```bash
+nm <app-binary> | grep -i url        # -> _$s12TestSwiftApp3url3forS2S_tF (мангл) и адрес
+```
+В `glue.c` подставь мангл (без ведущего `_`) в `CH_HOOK_SYM`, либо адрес в `CH_HOOK_ADDR`.
+
+## Сборка (iOS arm64) + установка
 
 ```bash
 SDK=$(xcrun --sdk iphoneos --show-sdk-path)
-xcrun --sdk iphoneos clang -arch arm64 -target arm64-apple-ios15.6 -isysroot "$SDK" -c stub.s -o stub.o
+xcrun --sdk iphoneos clang -arch arm64 -target arm64-apple-ios15.6 -isysroot "$SDK" \
+  -I ../../../coldhook/include -c glue.c -o glue.o
 xcrun --sdk iphoneos clang -arch arm64 -target arm64-apple-ios15.6 -isysroot "$SDK" -c ctor.c -o ctor.o
 xcrun --sdk iphoneos swiftc -target arm64-apple-ios15.6 -sdk "$SDK" \
-  -emit-library hook.swift stub.o ctor.o -o ch.dylib \
+  -emit-library hook.swift glue.o ctor.o -o ch.dylib \
   -Xlinker -install_name -Xlinker @rpath/ch.dylib \
   -Xlinker -fixup_chains -Xlinker -add_split_seg_info
+
+# собрать -> merge -> переподписать -> поставить (хук тянет Swift-рантайм -> --allow-new-dylibs
+# внутри merge; build_install.py уже зовёт merge в append-режиме)
+python3 ../../../scripts/build_install.py --hook "$PWD/ch.dylib"
 ```
 
-## Оффсет цели — найти под свою сборку
-
-`stub.s` зашит на `0x100004298` (vmaddr `url(for:)` в конкретной сборке). Для своей:
-
-```bash
-nm -n <app-binary> | grep -i url      # -> 0x1000xxxxx у нужной функции
-```
-
-и заменить суффикс символа в `stub.s` на этот hex без `0x`.
-
-## Merge + установка на устройство
-
-```bash
-# merge (append-режим: таргет без split-info; Swift-рантайм хука -> --allow-new-dylibs)
-vendor/MachOMerger/.build/release/MachOMerger <app>/TestSwiftApp ch.dylib out --allow-new-dylibs
-# либо одной командой: собрать -> merge -> переподписать -> поставить
-python3 scripts/build_install.py --hook /path/to/ch.dylib
-```
-
-Проверено end-to-end: устройство приняло пропатченный подписанный бандл, тап по кнопке
-не крашит и показывает `https://patched.coldhook`, в Console.app — строка `[coldhook]`.
+Проверено end-to-end: устройство приняло пропатченный подписанный бандл, краш убран, в Console
+строка `[coldhook]`. Запускаемый аналог без устройства (by-name + ORIG, с PC-relative прологом) —
+`tests/macos/run_swift.py`.
