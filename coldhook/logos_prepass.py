@@ -189,12 +189,28 @@ def prepass(text):
 
 
 def main(argv):
-    if not argv:
-        print("usage: coldhook-logos <input.x> [logos args...]", file=sys.stderr); return 2
+    if not argv or argv[0] in ("-h", "--help"):
+        print("usage: coldhook-logos [--strip-only] <input.x> [logos args...]\n"
+              "  по умолчанию: prepass (%hookf -> статика) + сток logos.pl -> ObjC++ в stdout\n"
+              "  --strip-only: только prepass (%hookf вырезан), logos НЕ зовётся -> .x/.xm в stdout\n"
+              "                (для theos: logos потом зовёт сам make со своими LOGOSFLAGS)",
+              file=sys.stderr)
+        return 2
+    strip_only = False
+    if argv[0] == "--strip-only":
+        strip_only = True
+        argv = argv[1:]
     src = argv[0]
     with open(src) as f:
         text = f.read()
     processed = prepass(text)
+
+    # theos-режим: отдаём преобразованный Logos-исходник как есть; logos.pl зовёт make.
+    if strip_only:
+        sys.stdout.write(processed)
+        return 0
+
+    # standalone-режим: сами прогоняем сток-logos -> финальный ObjC++ (.mm).
     # пишем во временный .x рядом (для корректных #line/относительных include logos)
     d = os.path.dirname(os.path.abspath(src))
     fd, tmp = tempfile.mkstemp(suffix=".x", dir=d, prefix=".coldhook_")
