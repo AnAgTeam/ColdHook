@@ -21,6 +21,11 @@ CH_HOOK_SYM glue). Так logos.pl получает валидный .x уже �
   coldhook-logos <input.x> [extra logos args...]   -> processed source в stdout
 
 Резолв «найти символ в рантайме» (MSFindSymbol-форма) статикой невозможен — не поддерживаем.
+
+Адрес цели задаётся ТОЛЬКО литералом в самом %hookf (%hookf(ret, 0xADDR, args)). Форму Logos
+`%init(имя = адрес)` НЕ читаем: там адрес — рантайм-указатель под MSHookFunction (вычисляется в
+конструкторе), а нам он нужен на этапе merge. by-address — расширение ColdHook (в каноне Logos
+второй слот %hookf = имя символа), такой твик не соберётся под стоковый Substrate.
 """
 import os
 import re

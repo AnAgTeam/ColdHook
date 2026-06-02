@@ -135,6 +135,11 @@ python3 -m coldhook merge --target <bin> --src <dylib> --out <patched>   # ин�
 | `%ctor` / `%orig` | как обычно (конструктор сливается через `__init_offsets`) |
 | ObjC `%hook` | компилится (шим `MSHookMessageEx`), но через merge ПОКА не активен — приедет с shared-режимом |
 
+Цель `%hookf` — по имени (`%hookf(ret, symbol, args)`, канон, переносимо) или по адресу-литералу
+(`%hookf(ret, 0xADDR, args)` → `CH_HOOK_ADDR`, расширение ColdHook, под стоковый Substrate не
+соберётся). Адрес через `%init(имя = адрес)` **нельзя** — это рантайм-указатель `MSHookFunction`,
+а ColdHook ставит хук статически на merge.
+
 Граница: синтаксис/`nic`/`make`/ObjC-свизл — за theos; статическая установка — за ColdHook
 (тонкая прослойка: пре-пасс + substrate-шим `coldhook/substrate/` + `install-theos`, не форк).
 Пример — `tests/hooks/logos_tweak/`; запускаемый прогон (пре-пасс + сток-logos + merge) —
