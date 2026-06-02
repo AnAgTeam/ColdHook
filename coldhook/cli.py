@@ -96,7 +96,16 @@ def build_parser() -> argparse.ArgumentParser:
                     help="подписать бинари в бандле (по умолчанию НЕТ — твоя забота)")
     pb.set_defaults(func=cmd_ipa)
 
+    pt = sub.add_parser("install-theos", help="поставить NIC-шаблон «ColdHook Tweak» в $THEOS")
+    pt.add_argument("--theos", help="путь к theos (по умолчанию $THEOS или ~/theos)")
+    pt.set_defaults(func=_cmd_install_theos)
+
     return p
+
+
+def _cmd_install_theos(args) -> int:
+    from .theos_install import cmd_install_theos
+    return cmd_install_theos(args)
 
 
 def main(argv: list[str] | None = None) -> int:

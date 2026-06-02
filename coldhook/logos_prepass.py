@@ -59,6 +59,29 @@ def _scan_block(text, i, opener, closer):
     raise ValueError(f"не нашёл парный '{closer}'")
 
 
+def _blank(text):
+    """Текст той же длины, где комментарии (//, /* */) и строки заменены пробелами. Для поиска
+    директив (%group/%init) ВНЕ комментариев/строк регекспом — позиции сохраняются 1:1."""
+    out = list(text)
+    i, n = 0, len(text)
+    while i < n:
+        if text.startswith("//", i):
+            j = text.find("\n", i); j = n if j < 0 else j
+        elif text.startswith("/*", i):
+            j = text.find("*/", i + 2); j = n if j < 0 else j + 2
+        elif text[i] in '"\'':
+            q = text[i]; j = i + 1
+            while j < n and text[j] != q:
+                j += 2 if text[j] == "\\" else 1
+            j = min(j + 1, n)
+        else:
+            i += 1; continue
+        for k in range(i, j):
+            if out[k] != "\n": out[k] = " "
+        i = j
+    return "".join(out)
+
+
 def _split_top_commas(s):
     """Разбить по запятым верхнего уровня (вне скобок)."""
     out, depth, cur = [], 0, ""
@@ -129,11 +152,12 @@ def _emit_hookf(ret, target, argdecls, body, gated, group):
 
 def prepass(text):
     """Вернуть (новый текст .x, список (group, fid) для gated-хуков)."""
-    # карта позиций -> имя группы (для определения gated)
+    # %group/%end ищем по ЗАБЕЛЕННОМУ тексту -> закомментированные/строковые не считаются.
+    blanked = _blank(text)
     gated_ranges = []
-    for m in re.finditer(r"%group\s+(\w+)", text):
+    for m in re.finditer(r"%group\s+(\w+)", blanked):
         start = m.end()
-        end_m = re.search(r"%end", text[start:])
+        end_m = re.search(r"%end", blanked[start:])
         end = start + end_m.start() if end_m else len(text)
         gated_ranges.append((start, end, m.group(1)))
 
@@ -146,6 +170,21 @@ def prepass(text):
     result, i, n = [], 0, len(text)
     used_include = False
     while i < n:
+        # Пропускаем комментарии и строки ВЕРБАТИМ — %hookf в них (закомментированный пример
+        # или упоминание в прозе) трогать нельзя. Иначе _scan_block может «съесть» парную скобку
+        # как часть //-комментария на след. строке -> ложный краш/обработка.
+        if text.startswith("//", i):
+            e = text.find("\n", i); e = n if e < 0 else e + 1
+            result.append(text[i:e]); i = e; continue
+        if text.startswith("/*", i):
+            e = text.find("*/", i + 2); e = n if e < 0 else e + 2
+            result.append(text[i:e]); i = e; continue
+        if text[i] in '"\'':
+            q = text[i]; j = i + 1
+            while j < n and text[j] != q:
+                j += 2 if text[j] == "\\" else 1
+            j = min(j + 1, n)
+            result.append(text[i:j]); i = j; continue
         if text.startswith("%hookf", i):
             # заголовок (...)
             p = text.index("(", i)
@@ -181,10 +220,14 @@ def prepass(text):
     by_group = defaultdict(list)
     for grp, fid in gated_hooks:
         by_group[grp].append(fid)
+    bout = _blank(out)   # %init в комментарии/строке не трогаем (позиции 1:1 с out)
     for grp, fids in by_group.items():
         enables = " ".join(f"coldhook_disp_{f} = (void*)&{f};" for f in fids)
-        out = re.sub(rf"%init\(\s*{re.escape(grp)}\s*\)",
-                     lambda mm, e=enables, g=grp: f"do {{ {e} %init({g}); }} while (0)", out)
+        def repl(mm, e=enables, g=grp):
+            if bout[mm.start()] != "%":   # '%' забелен -> матч внутри комментария/строки
+                return mm.group(0)
+            return f"do {{ {e} %init({g}); }} while (0)"
+        out = re.sub(rf"%init\(\s*{re.escape(grp)}\s*\)", repl, out)
     return out
 
 
