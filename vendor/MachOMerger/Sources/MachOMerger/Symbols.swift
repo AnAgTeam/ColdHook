@@ -20,10 +20,18 @@ func fixup(symbols: [nlist_64], start: Int, count: Int, strOff: Int, relocInfo: 
     let end  = start + count
     for i in start..<end {
         var sym = symbols[i]
-        
+
         // Fix it up
         sym.n_un.n_strx += UInt32(strOff)
-        sym.n_value = relocInfo.translate(address: sym.n_value, isB: isB)
+        // Транслируем n_value только у символов, ОПРЕДЕЛЁННЫХ в секции (N_SECT). STAB/отладочные
+        // (n_type & N_STAB=0xe0; например N_OSO с n_value = таймстамп .o), undefined (N_UNDF) и
+        // absolute (N_ABS) — их n_value не сегмент-относителен; транслировать его = мусор/краш.
+        // Актуально для debug-сборок (theos `make` без release, -g тащит STABS в symtab).
+        let isStab = (sym.n_type & 0xe0) != 0
+        let isSect = (sym.n_type & 0x0e) == 0x0e
+        if !isStab && isSect {
+            sym.n_value = relocInfo.translate(address: sym.n_value, isB: isB)
+        }
         syms.appendGeneric(value: sym)
     }
     

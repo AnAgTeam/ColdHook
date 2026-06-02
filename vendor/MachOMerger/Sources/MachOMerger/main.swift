@@ -410,6 +410,10 @@ func coldhookParseSymtab(_ st: (symbols: Data, strings: Data)?) -> [ColdhookSym]
         let strx = st.symbols.getGeneric(type: UInt32.self, offset: base)
         let type = st.symbols.getGeneric(type: UInt8.self, offset: base + 4)
         let value = st.symbols.getGeneric(type: UInt64.self, offset: base + 8)
+        // Пропускаем STAB/отладочные символы (n_type & N_STAB=0xe0): debug-сборки (theos `make`
+        // без release, -g) дублируют функции STABS-записями с тем же именем — иначе магик-символ
+        // _MACHOMERGER_HOOK_* обработался бы дважды (2-й раз читая уже пропатченную 1-ю инструкцию).
+        guard (type & 0xe0) == 0 else { continue }
         guard Int(strx) < st.strings.count else { continue }
         let name = (try? st.strings.advanced(by: Int(strx)).toString(encoding: .utf8, nullTerminated: true)) ?? ""
         if !name.isEmpty { res.append(ColdhookSym(name: name, value: value, type: type)) }
