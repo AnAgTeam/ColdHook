@@ -377,6 +377,46 @@ func coldhookParseSymtab(_ st: (symbols: Data, strings: Data)?) -> [ColdhookSym]
     return res
 }
 
+// ColdHook: первая инструкция цели сохраняется в ORIG-слот (чтобы хук мог звать оригинал).
+// Если она PC-relative (cbz/cbnz/tbz/b.cond/b/adr/adrp — частые прологи Swift на guard'ах
+// первого аргумента), её НАДО переэнкодить под адрес слота: относительный таргет иначе
+// уедет. Возвращает переэнкоженную инструкцию; не-PC-relative — без изменений. Таргет ветки
+// транслируется A->merged (для append A не двигается -> tr тождественна). Если новый offset
+// не влезает в формат — оставляем как есть (лучше, чем мусор; такой пролог редок).
+func coldhookReencodeForSlot(_ insn: UInt32, fromAddr: UInt64, slot: UInt64) -> UInt32 {
+    func sx(_ v: UInt32, _ bits: Int) -> Int64 { let s = 64 - bits; return Int64(bitPattern: UInt64(v) << s) >> s }
+    func tr(_ a: UInt64) -> Int64 { Int64(bitPattern: relocInfo.translate(address: a, isB: false)) }
+    let pc = Int64(bitPattern: fromAddr), slotI = Int64(bitPattern: slot)
+
+    if insn & 0xFC000000 == 0x14000000 || insn & 0xFC000000 == 0x94000000 {   // B / BL (imm26*4)
+        let d = tr(UInt64(bitPattern: pc + sx(insn & 0x03FFFFFF, 26) * 4)) - slotI
+        guard d & 3 == 0, (d >> 2) >= -(1 << 25), (d >> 2) < (1 << 25) else { return insn }
+        return (insn & 0xFC000000) | UInt32(UInt64(bitPattern: d >> 2) & 0x03FFFFFF)
+    }
+    if insn & 0xFF000010 == 0x54000000 || insn & 0x7E000000 == 0x34000000 || insn & 0x3B000000 == 0x18000000 {
+        // B.cond / CBZ / CBNZ / LDR-literal (imm19 в [23:5], *4)
+        let d = tr(UInt64(bitPattern: pc + sx((insn >> 5) & 0x7FFFF, 19) * 4)) - slotI
+        guard d & 3 == 0, (d >> 2) >= -(1 << 18), (d >> 2) < (1 << 18) else { return insn }
+        return (insn & ~(UInt32(0x7FFFF) << 5)) | (UInt32(UInt64(bitPattern: d >> 2) & 0x7FFFF) << 5)
+    }
+    if insn & 0x7E000000 == 0x36000000 {   // TBZ / TBNZ (imm14 в [18:5], *4)
+        let d = tr(UInt64(bitPattern: pc + sx((insn >> 5) & 0x3FFF, 14) * 4)) - slotI
+        guard d & 3 == 0, (d >> 2) >= -(1 << 13), (d >> 2) < (1 << 13) else { return insn }
+        return (insn & ~(UInt32(0x3FFF) << 5)) | (UInt32(UInt64(bitPattern: d >> 2) & 0x3FFF) << 5)
+    }
+    if insn & 0x9F000000 == 0x10000000 || insn & 0x9F000000 == 0x90000000 {   // ADR / ADRP
+        let isAdrp = insn & 0x80000000 != 0
+        let imm21 = (((insn >> 5) & 0x7FFFF) << 2) | ((insn >> 29) & 0x3)
+        let target = (isAdrp ? (pc & ~0xFFF) : pc) + (sx(imm21, 21) << (isAdrp ? 12 : 0))
+        let tm = tr(UInt64(bitPattern: target))
+        let d = isAdrp ? (((tm & ~0xFFF) - (slotI & ~0xFFF)) >> 12) : (tm - slotI)
+        guard d >= -(1 << 20), d < (1 << 20) else { return insn }
+        let v = UInt32(UInt64(bitPattern: d) & 0x1FFFFF)
+        return (insn & ~((UInt32(0x3) << 29) | (UInt32(0x7FFFF) << 5))) | ((v & 0x3) << 29) | (((v >> 2) & 0x7FFFF) << 5)
+    }
+    return insn
+}
+
 // Generate trampolines
 // Магик-символы хука и резолв по имени — через СЫРОЙ разбор symtab (nlist_64), а НЕ через
 // SwiftMachO.getSymbolTable: тот падает (BadFormat) на symtab реальных и Swift-бинарей, из-за
@@ -498,13 +538,16 @@ if !bSyms.isEmpty {
             relocInfo.replaceSegment(name: seg.0, isB: false, data: data)
 
             if origAddr != nil {
-                // Copy original first instruction to _MACHOMERGER_ORIG_* first instruction
-                // Obviously this mechanism does not work if said instruction is pc-relative, so we have to just assume it's not
+                // Сохраняем первую инструкцию цели в ORIG-слот. PC-relative переэнкодим под
+                // адрес слота (coldhookReencodeForSlot) — раньше копировалась как есть и при
+                // pc-relative прологе (cbz/cbnz/tbz/...) ORIG уводил не туда.
                 let origSeg = relocInfo.segment(forOrigAddress: origAddr, isB: true)!
                 let origOff = Int(origSeg.3)
                 var origData = origSeg.1
 
-                origData = origData.subdata(in: 0..<origOff) + Data(fromObject: origInsn) + origData.subdata(in: (origOff + 4)..<origData.count)
+                let slotMerged = relocInfo.translate(address: origAddr, isB: true)
+                let savedInsn = coldhookReencodeForSlot(origInsn, fromAddr: dstAddr, slot: slotMerged)
+                origData = origData.subdata(in: 0..<origOff) + Data(fromObject: savedInsn) + origData.subdata(in: (origOff + 4)..<origData.count)
                 relocInfo.replaceSegment(name: origSeg.0, isB: true, data: origData)
             }
         }

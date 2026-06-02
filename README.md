@@ -29,7 +29,26 @@ python3 tests/macos/run_exe.py        # merge в ГЛАВНЫЙ бинарь (MH
 python3 tests/macos/run_app.py       # полный .app: собрать -> coldhook ipa -> запустить
 python3 tests/macos/run_ctor.py      # конструкторы (%ctor) И у таргета, И у хука -> оба
 python3 tests/macos/run_sharedimport.py  # общий импорт (write) у таргета и хука -> bind
+python3 tests/macos/run_nosplit.py   # append-режим: таргет БЕЗ split-info (exe + dylib)
+python3 tests/macos/run_swift.py     # Swift by-name хук + ORIG (PC-relative пролог)
 ```
+
+### Реальные бинари без split-info (append-режим)
+
+Приложения/фреймворки идут без `LC_SEGMENT_SPLIT_INFO`. Тогда мёрджер не двигает таргет
+(оставляет на месте, его фиксапы/entry валидны), а сегменты хука **аппендит** после, переписывая
+заголовок в существующем padding'е. Детект автоматический. Проверено end-to-end на устройстве:
+Swift-хук вмёрджен в подписанное приложение, переподписан, краш убран. Сэмпл — `tests/hooks/swift_replace`.
+
+### Хук Swift-методов (by-name / by-offset + ORIG)
+
+Чистые Swift-методы (без `@objc`) Logos не берёт — у них нет селектора. ColdHook патчит статически:
+- по адресу: `CH_HOOK_ADDR(0x..., fn)`;
+- по имени символа (вкл. мангл): `CH_HOOK_SYM("$s12App3url...", fn)` (имя из `nm` без ведущего `_`).
+
+Замена — Swift-функция с тем же ABI (`@_silgen_name`), `CH_ORIG(fn)` зовёт оригинал. Первая
+инструкция-пролог может быть PC-relative (`cbz`/`cbnz`/`tbz` на guard'ах) — мёрджер переэнкодит
+её под адрес ORIG-слота. `@objc dynamic`-методы можно хукать и обычным ObjC-путём (через `NSString`).
 
 ### Хуки по оффсету в коде (`CH_HOOK_ADDR`)
 
