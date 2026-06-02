@@ -92,10 +92,56 @@
   )
 #define CH_HOOK_SYM(sym, fn) CH__STUB_SYM(sym, fn)
 
+// --- GATED хук: статически установлен, но рантайм-переключаемый ----------------------
+// Для Logos-групп (`%init(Group)`) и рантайм вкл/выкл: первую инструкцию цели мёрджер
+// патчит не прямо на замену, а на ТОНКИЙ THUNK, прыгающий через указатель `coldhook_disp_<fn>`
+// в ПИСЧЕМ __DATA. Дефолт указателя = ORIG => хук ВЫКЛЮЧЕН (цель работает как до хука,
+// прозрачно). Рантайм-флип (атомарная запись выровненного указателя, без W^X) включает:
+//   CH_GATE_ENABLE(fn)  -> disp = замена;   CH_GATE_DISABLE(fn) -> disp = ORIG.
+// Дефолт-OFF ставится статическим инициализатором (chained-fixup) ДО любого конструктора —
+// окна гонки нет. Указатель ОБЯЗАН лежать в __DATA (в append-режиме это __BDATA), не в
+// __DATA_CONST — иначе SIGBUS на запись. Thunk клобает только x16 (IP0 scratch на call-границе),
+// tail-call ABI-прозрачен. Цена — один косвенный переход на вызов; ungated-хук (CH_HOOK_SYM)
+// его не платит. Линкер варнит «static initializer» на дефолт-указатель — безобидно
+// (это chained-fixup на загрузке); глушится `-Wl,-no_warn_inits`.
+#define CH__STUB_SYM_GATED(sym, fn) \
+  __asm__( \
+    ".section __DATA,__data\n.p2align 3\n" \
+    ".globl _coldhook_disp_" #fn "\n" \
+    "_coldhook_disp_" #fn ":\n    .quad _coldhook_orig_" #fn "\n" \
+    ".text\n.p2align 2\n" \
+    ".globl _MACHOMERGER_HOOK_" sym "\n" \
+    ".no_dead_strip _MACHOMERGER_HOOK_" sym "\n" \
+    "_MACHOMERGER_HOOK_" sym ":\n" \
+    "    adrp x16, _coldhook_disp_" #fn "@PAGE\n" \
+    "    ldr x16, [x16, _coldhook_disp_" #fn "@PAGEOFF]\n" \
+    "    br x16\n" \
+    ".globl _MACHOMERGER_ORIG_" sym "\n" \
+    ".no_dead_strip _MACHOMERGER_ORIG_" sym "\n" \
+    "_MACHOMERGER_ORIG_" sym ":\n    brk #0\n" \
+    ".globl _MACHOMERGER_HOOKTRAMPOLINE_" sym "\n" \
+    ".no_dead_strip _MACHOMERGER_HOOKTRAMPOLINE_" sym "\n" \
+    "_MACHOMERGER_HOOKTRAMPOLINE_" sym ":\n    brk #0\n" \
+    ".globl _coldhook_orig_" #fn "\n" \
+    "_coldhook_orig_" #fn ":\n    b _MACHOMERGER_ORIG_" sym "\n" \
+    ".section __DATA_CONST,__const\n.p2align 3\n" \
+    "_coldhook_anchor_gated_" #fn ":\n    .quad _MACHOMERGER_HOOK_" sym "\n" \
+  )
+#define CH_HOOK_SYM_GATED(sym, fn) CH__STUB_SYM_GATED(sym, fn)
+
+// Доступ к гейту из C (например в конструкторе по %init(Group)):
+#define CH_GATE(fn)          coldhook_disp_##fn
+#define CH_DECLARE_GATE(fn)  extern void *coldhook_disp_##fn
+#define CH_GATE_ENABLE(fn)   (coldhook_disp_##fn = (void *)&fn)
+#define CH_GATE_DISABLE(fn)  (coldhook_disp_##fn = (void *)&coldhook_orig_##fn)
+
 // --- опциональные короткие алиасы ----------------------------------------------------
 #ifdef COLDHOOK_SHORT_NAMES
   #define HOOK_ADDR(off, fn)            CH_HOOK_ADDR(off, fn)
   #define HOOK_SYM(sym, fn)             CH_HOOK_SYM(sym, fn)
+  #define HOOK_SYM_GATED(sym, fn)       CH_HOOK_SYM_GATED(sym, fn)
+  #define GATE_ENABLE(fn)               CH_GATE_ENABLE(fn)
+  #define GATE_DISABLE(fn)              CH_GATE_DISABLE(fn)
   #define ORIG(name)                    CH_ORIG(name)
   #define DECLARE_ORIG(name, ret, ...)  CH_DECLARE_ORIG(name, ret, __VA_ARGS__)
 #endif

@@ -38,6 +38,7 @@ python3 tests/macos/run_ctor.py      # конструкторы (%ctor) И у т
 python3 tests/macos/run_sharedimport.py  # общий импорт (write) у таргета и хука -> bind
 python3 tests/macos/run_nosplit.py   # append-режим: таргет БЕЗ split-info (exe + dylib)
 python3 tests/macos/run_export.py    # хук ЭКСПОРТА по имени (CH_HOOK_SYM, C) + ORIG
+python3 tests/macos/run_gated.py     # GATED-хук: статически установлен, рантайм-переключаемый
 python3 tests/macos/run_swift.py     # Swift by-name хук + ORIG (PC-relative пролог)
 ```
 
