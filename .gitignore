@@ -16,3 +16,4 @@ __pycache__/
 # macOS
 .DS_Store
 tests/macos/build_app/
+tests/macos/build_exe/
