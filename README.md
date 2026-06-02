@@ -9,7 +9,9 @@ MachOMerger), без рантайм-кодогенерации и W^X-перех
 
 ```
 coldhook/             Python-оркестратор (info | merge | patch | ipa)
-coldhook/include/     coldhook.h — макросы хука (CH_HOOK_ADDR / CH_HOOK_SYM / CH_ORIG)
+coldhook/include/     coldhook.h — макросы хука (CH_HOOK_ADDR / CH_HOOK_SYM / CH_ORIG / _GATED)
+coldhook/logos_prepass.py  Logos-пре-пасс: %hookf -> статика ColdHook, остальное -> сток logos.pl
+coldhook/substrate/   clean-room шим Substrate-API (MSHookMessageEx -> рантайм-свизл ObjC)
 scripts/              build_install.py — сборка → merge → resign → установка на устройство
 tests/macos/          запускаемые macOS-харнессы (arm64) — полигоны без устройства
 tests/hooks/          готовые сэмплы хука (swift_replace, export_byname, hook_byaddr)

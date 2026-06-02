@@ -736,10 +736,12 @@ func coldhookAppendAssemble() -> Data {
     var bSegmentLCs: [Data] = []
     var bPlacements: [(fileOff: Int, data: Data)] = []
     var bodyEnd = aContentEnd
+    var bMaxVMEnd = coldhookBase &+ UInt64(aContentEnd)   // макс VM-конец B (для vmaddr __LINKEDIT)
     for entry in relocInfo.segRel where entry.1[0].isB {
         let part = entry.1[0]
         let newVM   = part.origCommand.vmAddr &+ part.offset
         let fileOff = Int(newVM &- coldhookBase)
+        bMaxVMEnd = max(bMaxVMEnd, newVM &+ part.origCommand.vmSize)   // vmSize >= filesize (bss)
 
         var slc = segment_command_64()
         slc.cmd = UInt32(LC_SEGMENT_64)
@@ -816,7 +818,10 @@ func coldhookAppendAssemble() -> Data {
     leSeg.cmd = UInt32(LC_SEGMENT_64)
     leSeg.cmdsize = UInt32(MemoryLayout<segment_command_64>.size)
     _ = withUnsafeMutableBytes(of: &leSeg.segname) { strcpy($0.baseAddress!, "__LINKEDIT") }
-    leSeg.vmaddr   = coldhookBase &+ UInt64(linkeditFileOff)
+    // vmaddr linkedit развязан от файлового офсета: кладём ЗА максимальный VM-конец сегментов B.
+    // Слайд по сегментам может отличаться (vmaddr-fileoff не обязан быть константой), а у B-данных
+    // bss даёт vmsize > filesize — без этого __BDATA по VM налезал на __LINKEDIT ('vm range overlaps').
+    leSeg.vmaddr   = max(coldhookBase &+ UInt64(linkeditFileOff), (bMaxVMEnd &+ pageMaskOff) & pageMask)
     leSeg.vmsize   = (UInt64(linkedit.count) + pageMaskOff) & pageMask
     leSeg.fileoff  = UInt64(linkeditFileOff)
     leSeg.filesize = UInt64(linkedit.count)

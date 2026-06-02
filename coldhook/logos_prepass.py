@@ -202,7 +202,11 @@ def main(argv):
         with os.fdopen(fd, "w") as f:
             f.write(processed)
         r = subprocess.run(["perl", LOGOS, tmp, *argv[1:]], capture_output=True, text=True)
-        sys.stdout.write(r.stdout)
+        # logos авто-линкует фреймворк CydiaSubstrate (.linker_option) — в сайдлоаде его нет,
+        # ObjC-свизл даёт наш шим (coldhook/substrate). Вырезаем директиву авто-линковки.
+        out = "\n".join(l for l in r.stdout.splitlines()
+                        if not (".linker_option" in l and "CydiaSubstrate" in l))
+        sys.stdout.write(out + ("\n" if out else ""))
         sys.stderr.write(r.stderr.replace(os.path.basename(tmp), os.path.basename(src)))
         return r.returncode
     finally:
