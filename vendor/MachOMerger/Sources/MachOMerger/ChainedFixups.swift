@@ -240,9 +240,16 @@ func mergeChainedFixups(infoA: MachOMergeData, infoB: MachOMergeData, relocInfo:
         let symTable = try! a.getSymbolTable()
 
         // Резолв импорта B внутрь образа (магик-символ или symtab таргета A).
+        // ВАЖНО: матчим в symtab A только DEFINED-символы (N_SECT, n_type & 0x0e == 0x0e).
+        // Undefined-символы A (n_type N_UNDF == 0) — это САМИ импорты таргета (напр. _write),
+        // их нельзя трактовать как внутренний адрес: иначе общий с таргетом импорт B
+        // отребейзится в мусор вместо bind. Такой символ уйдёт в mapExternalImport и
+        // сдедупится с импортом A по (dylib|имя).
         func resolveInternal(_ sym: String) -> (addr: UInt64, isB: Bool)? {
             if let d = getMagicSymbolVal(sym) { return (d.0, d.1) }
-            if let d = symTable.symbol(forName: sym) { return (d.value, false) }
+            if let d = symTable.symbol(forName: sym), (d.type & 0x0e) == 0x0e {
+                return (d.value, false)
+            }
             return nil
         }
         func writeFixup(loc: UInt64, raw: UInt64) {

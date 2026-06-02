@@ -27,6 +27,8 @@ python3 tests/macos/run_fat.py       # FAT (arm64+x86_64): патч arm64, x86_6
 python3 tests/macos/run_newdylib.py  # хук тянет свой dylib (libz) -> --allow-new-dylibs
 python3 tests/macos/run_exe.py        # merge в ГЛАВНЫЙ бинарь (MH_EXECUTE), запуск
 python3 tests/macos/run_app.py       # полный .app: собрать -> coldhook ipa -> запустить
+python3 tests/macos/run_ctor.py      # конструкторы (%ctor) И у таргета, И у хука -> оба
+python3 tests/macos/run_sharedimport.py  # общий импорт (write) у таргета и хука -> bind
 ```
 
 ### Хуки по оффсету в коде (`CH_HOOK_ADDR`)
@@ -90,6 +92,8 @@ python3 -m coldhook ipa    <in.ipa|.app> -c cfg -o <out>       # merge в бан
 - [x] FAT-слайсинг (патч arm64/arm64e-слайсов, неподдерживаемые — как есть, сборка lipo)
 - [x] Свои dylib у B (`--allow-new-dylibs`: вставка LC_LOAD_DYLIB + ремап dylib-ordinals)
 - [x] Merge в главный бинарь (MH_EXECUTE): `__PAGEZERO` verbatim, база 0x100000000, `LC_MAIN`/`LC_LOAD_DYLINKER`, флаги заголовка
+- [x] Конструкторы (`%ctor`/`__attribute__((constructor))`) у хука И таргета: слияние `__TEXT,__init_offsets` A+B в одну секцию (dyld4 не терпит две)
+- [x] Общий внешний импорт таргета и хука (`write`, Foundation и т.п.): резолв в symtab A только по DEFINED-символам -> bind, а не rebase в мусор
 - [ ] exports trie / multi-chain / FAT для arm64e на устройстве / многоинструкционный ORIG (PC-relative пролог)
 
 ## Лицензии

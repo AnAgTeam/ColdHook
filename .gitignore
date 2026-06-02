@@ -4,10 +4,7 @@ vendor/MachOMerger/.build/
 
 # Локальные сборки харнесса
 tests/macos/build/
-tests/macos/build_offset/
-tests/macos/build_hookaddr/
-tests/macos/build_fat/
-tests/macos/build_newdylib/
+tests/macos/build_*/
 
 # Python
 __pycache__/
@@ -15,5 +12,3 @@ __pycache__/
 
 # macOS
 .DS_Store
-tests/macos/build_app/
-tests/macos/build_exe/

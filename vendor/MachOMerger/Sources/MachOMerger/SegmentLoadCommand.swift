@@ -97,10 +97,19 @@ func generateSegmentLoadCommands(infoA: MachOMergeData, infoB: MachOMergeData, r
             sectLC.reserved1 = sect.reserved1
             sectLC.reserved2 = sect.reserved2
             sectLC.reserved3 = sect.reserved3
-            
+
+            // ColdHook: если сливаем __init_offsets A+B — перенацеливаем секцию A на
+            // объединённый массив (он лежит в мёртвой области заголовка B). См. main.swift.
+            if let im = coldhookInitMerge,
+               sect.section == "__init_offsets", (sect.flags.rawValue & 0xff) == 0x16 {
+                sectLC.addr = im.combinedVMAddr
+                sectLC.size = im.combinedSize
+                sectLC.offset = UInt32(im.combinedVMAddr &- coldhookBase)
+            }
+
             sectsData.appendGeneric(value: sectLC)
         }
-        
+
         if seg.1.count > 1 {
             for sect in seg.1[1].origCommand.sections {
                 var sectLC = section_64()
@@ -127,7 +136,15 @@ func generateSegmentLoadCommands(infoA: MachOMergeData, infoB: MachOMergeData, r
                 sectLC.reserved1 = sect.reserved1
                 sectLC.reserved2 = sect.reserved2
                 sectLC.reserved3 = sect.reserved3
-                
+
+                // ColdHook: если сливаем __init_offsets A+B — секцию B нейтрализуем
+                // (тип -> S_REGULAR), чтобы dyld её не считал второй init-секцией. Её записи
+                // уже скопированы в объединённый массив, на который смотрит секция A.
+                if coldhookInitMerge != nil,
+                   sect.section == "__init_offsets", (sect.flags.rawValue & 0xff) == 0x16 {
+                    sectLC.flags = sect.flags.rawValue & ~UInt32(0xff)
+                }
+
                 sectsData.appendGeneric(value: sectLC)
             }
         }

@@ -442,6 +442,80 @@ if let symsB = try? b.getSymbolTable(),
     }
 }
 
+// ColdHook: слияние __TEXT,__init_offsets (S_INIT_FUNC_OFFSETS) таргета A и хука B.
+// Современный clang кладёт конструкторы (%ctor / __attribute__((constructor))) сюда —
+// массив 32-битных image-base offset'ов на init-функции. Если такая секция есть И у A, И у B,
+// dyld4 мисхэндлит две секции этого типа (запускает первую, прыгает в мусор -> SIGILL).
+// Решение: слить записи B в секцию A, оставив ОДНУ init-секцию. На этом этапе (после
+// fixupViaSplitInfo + трамплинов) записи A и B уже содержат корректные merged image-offset'ы.
+// Объединённый массив кладём в мёртвую область старого заголовка B (начало __TEXT B,
+// затёртое magic'ом и больше нигде не используемое), перенацеливаем заголовок секции A туда
+// (см. generateSegmentLoadCommands), а секцию B нейтрализуем (тип -> S_REGULAR).
+struct ColdhookInitMerge {
+    var combinedVMAddr: UInt64   // merged vmaddr объединённого массива (туда смотрит секция A)
+    var combinedSize: UInt64     // размер объединённого массива, байт
+}
+var coldhookInitMerge: ColdhookInitMerge? = nil
+
+func coldhookFindInitOffsets(isB: Bool) -> (seg: String, dataOff: Int, size: Int)? {
+    for seg in relocInfo.segRel {
+        let part: (isB: Bool, origCommand: Segment64LoadCommand, data: Data, offset: UInt64)
+        if !isB {
+            part = seg.1[0]
+            guard !part.isB else { continue }
+        } else {
+            part = (seg.1.count == 2) ? seg.1[1] : seg.1[0]
+            guard part.isB else { continue }
+        }
+        for sect in part.origCommand.sections {
+            if sect.section == "__init_offsets" && (sect.flags.rawValue & 0xff) == 0x16 {
+                let dataOff = Int(sect.address &- part.origCommand.vmAddr)
+                return (seg.0, dataOff, Int(sect.size))
+            }
+        }
+    }
+    return nil
+}
+
+func coldhookMergeInitOffsets() {
+    guard let aInit = coldhookFindInitOffsets(isB: false),
+          let bInit = coldhookFindInitOffsets(isB: true) else {
+        return  // 0 или 1 init-секция -> сливать нечего, текущее поведение
+    }
+
+    guard let (aData, _) = relocInfo.segment(forName: aInit.seg, isB: false),
+          let (bData, _) = relocInfo.segment(forName: bInit.seg, isB: true) else {
+        print("ColdHook: не нашёл сегменты для слияния __init_offsets"); exit(-1)
+    }
+    let aEntries = aData.subdata(in: aInit.dataOff..<(aInit.dataOff + aInit.size))
+    let bEntries = bData.subdata(in: bInit.dataOff..<(bInit.dataOff + bInit.size))
+    let combined = aEntries + bEntries
+
+    // Мёртвая область = старый заголовок B в начале её __TEXT (до первой секции).
+    guard let bTextSeg = relocInfo.segRel.first(where: { $0.0 == "__TEXT" }) else {
+        print("ColdHook: B без __TEXT — не могу слить __init_offsets"); exit(-1)
+    }
+    let bTextPart = (bTextSeg.1.count == 2) ? bTextSeg.1[1] : bTextSeg.1[0]
+    guard bTextPart.isB else {
+        print("ColdHook: __TEXT B не найден — не могу слить __init_offsets"); exit(-1)
+    }
+    let bTextVM = bTextPart.origCommand.vmAddr &+ bTextPart.offset
+    let firstSect = bTextPart.origCommand.sections.map { $0.address }.min() ?? bTextPart.origCommand.vmAddr
+    let deadSize = Int(firstSect &- bTextPart.origCommand.vmAddr)
+    guard combined.count <= deadSize else {
+        print("ColdHook: объединённый __init_offsets (\(combined.count) б) не влез в мёртвую область B (\(deadSize) б)")
+        exit(-1)
+    }
+
+    var nb = bTextPart.data
+    nb.replaceSubrange(0..<combined.count, with: combined)
+    relocInfo.replaceSegment(name: "__TEXT", isB: true, data: nb)
+
+    coldhookInitMerge = ColdhookInitMerge(combinedVMAddr: bTextVM, combinedSize: UInt64(combined.count))
+    print("ColdHook: слил __init_offsets A+B (\(aInit.size + bInit.size) б) в мёртвую область B @ \(String(format: "0x%llx", bTextVM))")
+}
+coldhookMergeInitOffsets()
+
 // Generate most of the MachO content, except header
 var machOData = Data()
 
