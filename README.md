@@ -39,6 +39,7 @@ python3 tests/macos/run_sharedimport.py  # общий импорт (write) у т
 python3 tests/macos/run_nosplit.py   # append-режим: таргет БЕЗ split-info (exe + dylib)
 python3 tests/macos/run_export.py    # хук ЭКСПОРТА по имени (CH_HOOK_SYM, C) + ORIG
 python3 tests/macos/run_gated.py     # GATED-хук: статически установлен, рантайм-переключаемый
+python3 tests/macos/run_logos.py     # Logos %hookf -> статика ColdHook (пре-пасс + сток logos.pl)
 python3 tests/macos/run_swift.py     # Swift by-name хук + ORIG (PC-relative пролог)
 ```
 

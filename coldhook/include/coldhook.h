@@ -129,6 +129,32 @@
   )
 #define CH_HOOK_SYM_GATED(sym, fn) CH__STUB_SYM_GATED(sym, fn)
 
+// GATED по АДРЕСУ (стрипнутая цель). То же, что CH_HOOK_SYM_GATED, но магик-символ по offset.
+#define CH__STUB_ADDR_GATED(off, fn) \
+  __asm__( \
+    ".section __DATA,__data\n.p2align 3\n" \
+    ".globl _coldhook_disp_" #fn "\n" \
+    "_coldhook_disp_" #fn ":\n    .quad _coldhook_orig_" #fn "\n" \
+    ".text\n.p2align 2\n" \
+    ".globl _MACHOMERGER_HOOK_COLDHOOK_ADDR_" #off "\n" \
+    ".no_dead_strip _MACHOMERGER_HOOK_COLDHOOK_ADDR_" #off "\n" \
+    "_MACHOMERGER_HOOK_COLDHOOK_ADDR_" #off ":\n" \
+    "    adrp x16, _coldhook_disp_" #fn "@PAGE\n" \
+    "    ldr x16, [x16, _coldhook_disp_" #fn "@PAGEOFF]\n" \
+    "    br x16\n" \
+    ".globl _MACHOMERGER_ORIG_COLDHOOK_ADDR_" #off "\n" \
+    ".no_dead_strip _MACHOMERGER_ORIG_COLDHOOK_ADDR_" #off "\n" \
+    "_MACHOMERGER_ORIG_COLDHOOK_ADDR_" #off ":\n    brk #0\n" \
+    ".globl _MACHOMERGER_HOOKTRAMPOLINE_COLDHOOK_ADDR_" #off "\n" \
+    ".no_dead_strip _MACHOMERGER_HOOKTRAMPOLINE_COLDHOOK_ADDR_" #off "\n" \
+    "_MACHOMERGER_HOOKTRAMPOLINE_COLDHOOK_ADDR_" #off ":\n    brk #0\n" \
+    ".globl _coldhook_orig_" #fn "\n" \
+    "_coldhook_orig_" #fn ":\n    b _MACHOMERGER_ORIG_COLDHOOK_ADDR_" #off "\n" \
+    ".section __DATA_CONST,__const\n.p2align 3\n" \
+    "_coldhook_anchor_gated_" #fn ":\n    .quad _MACHOMERGER_HOOK_COLDHOOK_ADDR_" #off "\n" \
+  )
+#define CH_HOOK_ADDR_GATED(off, fn) CH__STUB_ADDR_GATED(off, fn)
+
 // Доступ к гейту из C (например в конструкторе по %init(Group)):
 #define CH_GATE(fn)          coldhook_disp_##fn
 #define CH_DECLARE_GATE(fn)  extern void *coldhook_disp_##fn
