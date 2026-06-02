@@ -371,12 +371,15 @@ func mergeChainedFixups(infoA: MachOMergeData, infoB: MachOMergeData, relocInfo:
         
         // Get matching segment
         let seg = relocInfo.segment(forIndex: Int(i), isB: true)
-        
+
         // Change segment offset
+        // segment_offset — это vmaddr-смещение сегмента от БАЗЫ ОБРАЗА. У B (dylib, база 0)
+        // оно считалось бы от 0, давая абсолютный merged vmaddr; для исполняемого (база
+        // 0x100000000) вычитаем coldhookBase, чтобы получить смещение от базы. dylib: 0 -> no-op.
         let segmentOff = data.getGeneric(type: UInt64.self, offset: 0x4)
-        
-        data = data.subdata(in: 0..<4) + Data(fromObject: segmentOff &+ seg.2) + data.subdata(in: 12..<data.count)
-        
+
+        data = data.subdata(in: 0..<4) + Data(fromObject: segmentOff &+ seg.2 &- coldhookBase) + data.subdata(in: 12..<data.count)
+
         segsB.append(data)
     }
     

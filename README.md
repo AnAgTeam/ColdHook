@@ -25,6 +25,7 @@ python3 tests/macos/run_offset.py    # хук по сырому оффсету (
 python3 tests/macos/run_hookaddr.py  # by-offset через макрос CH_HOOK_ADDR + coldhook merge
 python3 tests/macos/run_fat.py       # FAT (arm64+x86_64): патч arm64, x86_64 как есть
 python3 tests/macos/run_newdylib.py  # хук тянет свой dylib (libz) -> --allow-new-dylibs
+python3 tests/macos/run_exe.py        # merge в ГЛАВНЫЙ бинарь (MH_EXECUTE), запуск
 python3 tests/macos/run_app.py       # полный .app: собрать -> coldhook ipa -> запустить
 ```
 
@@ -88,7 +89,8 @@ python3 -m coldhook ipa    <in.ipa|.app> -c cfg -o <out>       # merge в бан
 - [ ] Подпись бандла под TrollStore/dev-серт (resign .app, порядок вложенности)
 - [x] FAT-слайсинг (патч arm64/arm64e-слайсов, неподдерживаемые — как есть, сборка lipo)
 - [x] Свои dylib у B (`--allow-new-dylibs`: вставка LC_LOAD_DYLIB + ремап dylib-ordinals)
-- [ ] exports trie / multi-chain / MH_EXECUTE base / многоинструкционный ORIG (PC-relative пролог)
+- [x] Merge в главный бинарь (MH_EXECUTE): `__PAGEZERO` verbatim, база 0x100000000, `LC_MAIN`/`LC_LOAD_DYLINKER`, флаги заголовка
+- [ ] exports trie / multi-chain / FAT для arm64e на устройстве / многоинструкционный ORIG (PC-relative пролог)
 
 ## Лицензии
 

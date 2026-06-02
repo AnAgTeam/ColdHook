@@ -37,6 +37,7 @@ struct MachOMergeData {
     var dylibs: [String] = []
     var chainedFixups: Data?
     var unixthread: [(flavor: UInt32, state: Data)]?
+    var mainCmd: MainLoadCommand?   // ColdHook: LC_MAIN исполняемого (entry point)
     var exportsTrie: Data?
     var symtab: (symbols: Data, strings: Data)?
     var dysymtab: (localStart: Int, localCount: Int, externalStart: Int, externalCount: Int, undefStart: Int, undefCount: Int, indirect: Data)?
@@ -119,6 +120,8 @@ func collectData(fromMachO machO: MachO) -> MachOMergeData {
             // Will be handled later
         } else if let unixthread = cmd as? UnixThreadLoadCommand {
             result.unixthread = unixthread.threadStates
+        } else if let mainCmd = cmd as? MainLoadCommand {
+            result.mainCmd = mainCmd   // ColdHook: entry point исполняемого (MH_EXECUTE)
         } else if cmdNum == LC_SEGMENT_SPLIT_INFO {
             result.splitInfo = getLECmdData(cmd, name: "LC_SEGMENT_SPLIT_INFO")
         } else if cmdNum == LC_FUNCTION_STARTS {
@@ -130,7 +133,8 @@ func collectData(fromMachO machO: MachO) -> MachOMergeData {
             // результат ("missing LC_LOAD_DYLIB"). Эмитится через otherCommands (только A).
             // Merge dylib-списка B и правка dylib-ordinals — часть отложенной задачи импортов A.
             result.otherCommands.append(cmd)
-        } else if cmdNum == LC_ID_DYLIB || cmdNum == LC_UUID || cmdNum == LC_ID_DYLINKER || cmdNum == LC_BUILD_VERSION || cmdNum == LC_SOURCE_VERSION {
+        } else if cmdNum == LC_ID_DYLIB || cmdNum == LC_UUID || cmdNum == LC_ID_DYLINKER || cmdNum == LC_BUILD_VERSION || cmdNum == LC_SOURCE_VERSION || cmdNum == LC_LOAD_DYLINKER {
+            // ColdHook: LC_LOAD_DYLINKER (исполняемый грузит /usr/lib/dyld) — сохранить вербатим.
             result.otherCommands.append(cmd)
         } else if cmdNum == LC_CODE_SIGNATURE || cmdNum == LC_ENCRYPTION_INFO_64 {
         } else {
@@ -185,6 +189,14 @@ func collectData(fromMachO machO: MachO) -> MachOMergeData {
 // Collect data from both MachOs
 var dataA = collectData(fromMachO: a)
 var dataB = collectData(fromMachO: b)
+
+// ColdHook: исполняемый (MH_EXECUTE) имеет __PAGEZERO (segment 0, vmaddr 0, vmsize 4ГБ) и
+// базируется на 0x100000000. Его нельзя ребейзить к 0 (как dylib) — __PAGEZERO остаётся на
+// vmaddr 0, контент пакуется от базы, заголовок резервируется в __TEXT (первом контент-сегменте).
+let coldhookHasPageZero = (dataA.segments.first?.0.name == "__PAGEZERO")
+let coldhookBase: UInt64 = coldhookHasPageZero
+    ? (dataA.segments.first(where: { $0.0.name != "__PAGEZERO" })?.0.vmAddr ?? 0)
+    : 0
 
 // Patch out magic of both MachOs
 // Fixes issues with some third party software (e.g. Frida) finding the wrong place and mistaking it for the header
@@ -265,12 +277,19 @@ guard !sortingRequired else {
 }
 
 // Relocate segments
-var curReloc: UInt64 = 0x4000 // Reserve some space for our new header
+// ColdHook: для исполняемого пакуем контент от базы (0x100000000) + 0x4000 под заголовок;
+// __PAGEZERO остаётся на vmaddr 0 и в упаковке не участвует. Для dylib — как было (с 0x4000).
+var curReloc: UInt64 = coldhookBase + 0x4000 // Reserve some space for our new header
 var nSegments: [(String, [(isB: Bool, origCommand: Segment64LoadCommand, data: Data, offset: UInt64)])] = []
 for var seg in segments {
+    if seg.0 == "__PAGEZERO" {
+        seg.1[0].offset = 0   // остаётся на vmaddr 0, контент не двигаем
+        nSegments.append(seg)
+        continue
+    }
     let origVM = seg.1[0].origCommand.vmAddr
     seg.1[0].offset = curReloc &- origVM
-    
+
     curReloc += seg.1[0].origCommand.vmSize
     curReloc = (curReloc + pageMaskOff) & pageMask
     
@@ -463,7 +482,18 @@ let (symCmdCount, symCmdData) = emitSymtabDysymtab(infoA: dataA, infoB: dataB, r
 loadCommandsCount += symCmdCount
 loadCommands += symCmdData
 
-if dataA.unixthread != nil {
+if let mainCmd = dataA.mainCmd {
+    // ColdHook: исполняемый — entry point. entryoff (файловый = vmaddr-base, т.к. __TEXT@fileoff 0)
+    // транслируем в новый vmaddr и пересчитываем относительно базы.
+    let origEntryVA = coldhookBase &+ mainCmd.entryOffset
+    let newEntryVA  = relocInfo.translate(address: origEntryVA, isB: false)
+    let newEntryoff = newEntryVA &- coldhookBase
+    loadCommands.appendGeneric(value: UInt32(0x80000028)) // LC_MAIN
+    loadCommands.appendGeneric(value: UInt32(24))         // cmdsize
+    loadCommands.appendGeneric(value: newEntryoff)        // entryoff
+    loadCommands.appendGeneric(value: mainCmd.stackSize)  // stacksize
+    loadCommandsCount += 1
+} else if dataA.unixthread != nil {
     let (count, cmd) = emitUnixthread(info: dataA, relocInfo: relocInfo, isB: false)
     loadCommandsCount += count
     loadCommands += cmd
@@ -504,7 +534,9 @@ _ = withUnsafeMutableBytes(of: &linkeditLC.segname) { ptr in
 }
 linkeditLC.vmaddr = lastSegment.origCommand.vmAddr + lastSegment.offset + lastSegment.origCommand.vmSize
 linkeditLC.vmsize = UInt64(linkedit.count)
-linkeditLC.fileoff = lastSegment.origCommand.fileOffset + lastSegment.offset + lastSegment.origCommand.fileSize
+// ColdHook: fileoff linkedit = сразу после machOData (+0x4000 заголовок). Через vmaddr-offset
+// последнего сегмента было неверно при B-в-исполняемом (давало vmaddr вместо file-offset).
+linkeditLC.fileoff = UInt64(machOData.count + 0x4000)
 linkeditLC.filesize = UInt64(linkedit.count)
 linkeditLC.maxprot = VM_PROT_READ
 linkeditLC.initprot = VM_PROT_READ
@@ -520,6 +552,9 @@ hdr.cpusubtype = Int32(bitPattern: a.cpuSubType)
 // ColdHook: сохраняем filetype целевого A (MH_DYLIB/MH_EXECUTE), а не хардкодим
 // MH_DYLINKER — иначе dlopen/dyld не грузят результат ("unloadable file type 7").
 hdr.filetype = a.filetype.rawValue
+// ColdHook: сохраняем флаги заголовка A (MH_PIE/TWOLEVEL/DYLDLINK/NOUNDEFS) — мёрджер их
+// обнулял, и исполняемый с flags=0 ядро отвергало на exec (SIGKILL). offset 0x18 в mach_header_64.
+hdr.flags = a.data.getGeneric(type: UInt32.self, offset: 0x18)
 hdr.ncmds = UInt32(loadCommandsCount)
 hdr.sizeofcmds = UInt32(loadCommands.count + loadCommandsSLC.count)
 

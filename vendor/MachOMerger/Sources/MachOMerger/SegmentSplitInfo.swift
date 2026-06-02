@@ -69,13 +69,15 @@ func ssiFixBr26(instr: UInt32, at: UInt64, atOld: UInt64, to: UInt64, toOld: UIn
 }
 
 func ssiFixImgOff32(val: UInt32, at: UInt64, to: UInt64) -> UInt32 {
-    // This should simply point to the new address
-    guard to <= UInt32.max else {
+    // IMAGE_OFF_32 — это СМЕЩЕНИЕ от базы образа, не абсолютный vmaddr. ColdHook: для
+    // исполняемого база = 0x100000000, поэтому вычитаем coldhookBase (для dylib она 0).
+    let off = to &- coldhookBase
+    guard off <= UInt32.max else {
         print("ssiFixImgOff32: Cannot fixup: Distance too large!")
         exit(-1)
     }
-    
-    return UInt32(to)
+
+    return UInt32(off)
 }
 
 func ssiFixThP64(val: UInt64, at: UInt64, to: UInt64) -> UInt64 {
@@ -166,7 +168,10 @@ func processSplitInfo(_ reader: ULEB128Reader, relocInfo: RelocInfo, isB: Bool) 
                     switch kind {
                     case 2:
                         let loc = fromSection.getGeneric(type: UInt32.self, offset: UInt(fromSectionOffset))
-                        let new = loc + UInt32(toAddr - toAddrOld)
+                        // ColdHook: для B дельта релокации может быть огромной (B переезжает в
+                        // адресное пространство исполняемого, base 0x100000000) — берём младшие
+                        // 32 бита без trap (UInt32() паниковал). Для A (дельта ~0x4000) без изменений.
+                        let new = loc &+ UInt32(truncatingIfNeeded: toAddr &- toAddrOld)
                         fromSection = fromSection[0..<Int(fromSectionOffset)] + Data(fromObject: new) + fromSection[Int(fromSectionOffset + 4)...]
                         break
 

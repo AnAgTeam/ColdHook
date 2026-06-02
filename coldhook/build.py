@@ -110,8 +110,9 @@ def patch_target(target: Target, signing: Signing, binary: str, out: str,
         else:
             _say(f"[{target.name}] {C_YELL}подпись пропущена{C_CYAN}")
 
+        # Переносим режим оригинала на результат (исполняемый должен сохранить +x).
+        shutil.copymode(binary, merged)
         if in_place:
-            shutil.copymode(binary, merged)
             shutil.move(merged, out)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
