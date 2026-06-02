@@ -125,12 +125,22 @@ class RelocInfo {
     
     public func section(forIndex: Int, isB: Bool) -> (Data, UInt64, UInt64)? {
         if forIndex == 0 {
-            // mach header
-            // Should point to the new one
+            // mach header / image base "секция 0"
             if !isB {
                 return (Data(), segRel[0].1[0].origCommand.vmAddr, 0)
             } else {
-                return (Data(), segRel[0].1[1].origCommand.vmAddr, 0)
+                // ColdHook: image base сегмента B = ПЕРВЫЙ сегмент с частью B. Хардкод
+                // segRel[0].1[1] предполагал interleave (A и B в одной записи); в append
+                // сегменты B отдельные, у segRel[0]=__PAGEZERO части B нет -> out-of-range.
+                // newAddr = РЕЛОЦИРОВАННАЯ база B (раньше было 0 — неверно для перемещённого B,
+                // латентный баг, всплывал на фиксапах B в заголовок, напр. у Swift-хуков).
+                for seg in segRel {
+                    let s = (seg.1.count == 2) ? seg.1[1] : seg.1[0]
+                    if s.isB {
+                        return (Data(), s.origCommand.vmAddr, s.origCommand.vmAddr &+ s.offset)
+                    }
+                }
+                return (Data(), 0, 0)
             }
         }
         

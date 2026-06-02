@@ -128,13 +128,16 @@ func collectData(fromMachO machO: MachO) -> MachOMergeData {
             result.functionStarts = getLECmdData(cmd, name: "LC_FUNCTION_STARTS")
         } else if cmdNum == LC_DATA_IN_CODE {
             result.dataInCode = getLECmdData(cmd, name: "LC_DATA_IN_CODE")
-        } else if cmdNum == LC_LOAD_DYLIB {
-            // ColdHook: сохраняем LC_LOAD_DYLIB (минимум libSystem), иначе dyld не грузит
-            // результат ("missing LC_LOAD_DYLIB"). Эмитится через otherCommands (только A).
-            // Merge dylib-списка B и правка dylib-ordinals — часть отложенной задачи импортов A.
+        } else if cmdNum == LC_LOAD_DYLIB || cmdNum == LC_LOAD_WEAK_DYLIB || cmdNum == LC_REEXPORT_DYLIB || cmdNum == LC_LAZY_LOAD_DYLIB || cmdNum == LC_LOAD_UPWARD_DYLIB {
+            // ColdHook: сохраняем всё семейство LC_*_DYLIB вербатим. weak в т.ч. — Swift-рантайм
+            // (libswiftCoreFoundation/CoreImage/Darwin/Dispatch/Metal...) грузится как
+            // LC_LOAD_WEAK_DYLIB; без сохранения dyld не грузит результат. Эмитится через
+            // otherCommands (только A). Merge dylib-списка B и правка ordinals — отложенная задача.
             result.otherCommands.append(cmd)
-        } else if cmdNum == LC_ID_DYLIB || cmdNum == LC_UUID || cmdNum == LC_ID_DYLINKER || cmdNum == LC_BUILD_VERSION || cmdNum == LC_SOURCE_VERSION || cmdNum == LC_LOAD_DYLINKER {
+        } else if cmdNum == LC_ID_DYLIB || cmdNum == LC_UUID || cmdNum == LC_ID_DYLINKER || cmdNum == LC_BUILD_VERSION || cmdNum == LC_SOURCE_VERSION || cmdNum == LC_LOAD_DYLINKER || cmdNum == LC_RPATH {
             // ColdHook: LC_LOAD_DYLINKER (исполняемый грузит /usr/lib/dyld) — сохранить вербатим.
+            // LC_RPATH (@executable_path/Frameworks и т.п.) — только строка пути, релоцировать
+            // нечего, сохраняем как есть, иначе приложение не найдёт свои фреймворки.
             result.otherCommands.append(cmd)
         } else if cmdNum == LC_CODE_SIGNATURE || cmdNum == LC_ENCRYPTION_INFO_64 {
         } else {
@@ -198,6 +201,18 @@ let coldhookBase: UInt64 = coldhookHasPageZero
     ? (dataA.segments.first(where: { $0.0.name != "__PAGEZERO" })?.0.vmAddr ?? 0)
     : 0
 
+// ColdHook: APPEND-режим. Реальный таргет A (приложение или framework-dylib) идёт БЕЗ
+// LC_SEGMENT_SPLIT_INFO — мёрджер не может его релоцировать. Поэтому A НЕ двигаем (offset 0,
+// фиксапы/symtab/entry валидны как есть), а сегменты хука B аппендим ПОСЛЕ A на новые vmaddr'ы.
+// Заголовок переписываем в пределах существующего padding A (между LC и первой секцией).
+// B (наш хук) собираем сами и ВСЕГДА со split-info — его релоцируем штатно.
+let coldhookAppendMode = (dataA.splitInfo == nil)
+if coldhookAppendMode && dataB.splitInfo == nil {
+    print("ColdHook: append-режим (таргет A без split-info), но и у хука B нет split-info. "
+        + "Пересобери хук с -Xlinker -add_split_seg_info.")
+    exit(-1)
+}
+
 // Patch out magic of both MachOs
 // Fixes issues with some third party software (e.g. Frida) finding the wrong place and mistaking it for the header
 // Of course the root issue is in third party software, but I guess we can make their life easier
@@ -239,7 +254,17 @@ for seg in dataB.segments {
     }
 
     let newEntry = [(isB: true, origCommand: seg.0, data: data, offset: 0 as UInt64)]
-    
+
+    if coldhookAppendMode {
+        // A не трогаем — сегменты B идут ОТДЕЛЬНЫМИ записями после A (не мёрджим по имени).
+        // Переименовываем (__TEXT -> __BTEXT и т.п.): имена сегментов косметические (код B
+        // адресуется по vmaddr), но уникальность нужна — иначе replaceSegment/forName по имени
+        // находят сегмент A. Длина +1 символ, влезает в 16.
+        let renamed = "__B" + seg.0.name.dropFirst(2)
+        segments.append((String(renamed), newEntry))
+        continue
+    }
+
     var found = false
     var new: [(String, [(isB: Bool, origCommand: Segment64LoadCommand, data: Data, offset: UInt64)])] = []
     for s in segments {
@@ -250,12 +275,12 @@ for seg in dataB.segments {
             new.append(s)
         }
     }
-    
+
     if !found {
         new.append((seg.0.name, newEntry))
         sortingRequired = true
     }
-    
+
     segments = new
 }
 
@@ -279,29 +304,49 @@ guard !sortingRequired else {
 // Relocate segments
 // ColdHook: для исполняемого пакуем контент от базы (0x100000000) + 0x4000 под заголовок;
 // __PAGEZERO остаётся на vmaddr 0 и в упаковке не участвует. Для dylib — как было (с 0x4000).
-var curReloc: UInt64 = coldhookBase + 0x4000 // Reserve some space for our new header
 var nSegments: [(String, [(isB: Bool, origCommand: Segment64LoadCommand, data: Data, offset: UInt64)])] = []
-for var seg in segments {
-    if seg.0 == "__PAGEZERO" {
-        seg.1[0].offset = 0   // остаётся на vmaddr 0, контент не двигаем
+if coldhookAppendMode {
+    // A не двигаем (offset 0). B пакуем на новые vmaddr'ы после максимального конца сегмента A
+    // (контент остаётся base+fileoff-контигуальным, поэтому fileoff B = vmaddr B - base).
+    var aMaxEnd: UInt64 = coldhookBase + 0x4000
+    for seg in segments where !seg.1[0].isB && seg.0 != "__PAGEZERO" {
+        aMaxEnd = max(aMaxEnd, seg.1[0].origCommand.vmAddr &+ seg.1[0].origCommand.vmSize)
+    }
+    var curReloc = (aMaxEnd + pageMaskOff) & pageMask
+    for var seg in segments {
+        if !seg.1[0].isB {
+            seg.1[0].offset = 0   // сегмент A остаётся на исходном vmaddr
+        } else {
+            seg.1[0].offset = curReloc &- seg.1[0].origCommand.vmAddr
+            curReloc += seg.1[0].origCommand.vmSize
+            curReloc = (curReloc + pageMaskOff) & pageMask
+        }
         nSegments.append(seg)
-        continue
     }
-    let origVM = seg.1[0].origCommand.vmAddr
-    seg.1[0].offset = curReloc &- origVM
+} else {
+    var curReloc: UInt64 = coldhookBase + 0x4000 // Reserve some space for our new header
+    for var seg in segments {
+        if seg.0 == "__PAGEZERO" {
+            seg.1[0].offset = 0   // остаётся на vmaddr 0, контент не двигаем
+            nSegments.append(seg)
+            continue
+        }
+        let origVM = seg.1[0].origCommand.vmAddr
+        seg.1[0].offset = curReloc &- origVM
 
-    curReloc += seg.1[0].origCommand.vmSize
-    curReloc = (curReloc + pageMaskOff) & pageMask
-    
-    if seg.1.count == 2 {
-        let origVM = seg.1[1].origCommand.vmAddr
-        seg.1[1].offset = curReloc &- origVM
-        
-        curReloc += seg.1[1].origCommand.vmSize
+        curReloc += seg.1[0].origCommand.vmSize
         curReloc = (curReloc + pageMaskOff) & pageMask
+
+        if seg.1.count == 2 {
+            let origVM = seg.1[1].origCommand.vmAddr
+            seg.1[1].offset = curReloc &- origVM
+
+            curReloc += seg.1[1].origCommand.vmSize
+            curReloc = (curReloc + pageMaskOff) & pageMask
+        }
+
+        nSegments.append(seg)
     }
-    
-    nSegments.append(seg)
 }
 
 let relocInfo = RelocInfo(segRel: nSegments)
@@ -314,17 +359,41 @@ fixupViaSplitInfo(infoA: dataA, infoB: dataB, relocInfo: relocInfo)
 // What's left is essentially chained fixups and a few others
 let newChainedFixups = mergeChainedFixups(infoA: dataA, infoB: dataB, relocInfo: relocInfo, machOA: a, machOB: b)
 
+// ColdHook: сырой разбор symtab (nlist_64) — устойчив к Swift/стрипнутым бинарям, в отличие
+// от SwiftMachO.getSymbolTable. name из пула строк по n_strx; n_type для отбора DEFINED (N_SECT).
+struct ColdhookSym { let name: String; let value: UInt64; let type: UInt8 }
+func coldhookParseSymtab(_ st: (symbols: Data, strings: Data)?) -> [ColdhookSym] {
+    guard let st = st else { return [] }
+    var res: [ColdhookSym] = []
+    for i in 0..<(st.symbols.count / 16) {
+        let base = UInt(i * 16)
+        let strx = st.symbols.getGeneric(type: UInt32.self, offset: base)
+        let type = st.symbols.getGeneric(type: UInt8.self, offset: base + 4)
+        let value = st.symbols.getGeneric(type: UInt64.self, offset: base + 8)
+        guard Int(strx) < st.strings.count else { continue }
+        let name = (try? st.strings.advanced(by: Int(strx)).toString(encoding: .utf8, nullTerminated: true)) ?? ""
+        if !name.isEmpty { res.append(ColdhookSym(name: name, value: value, type: type)) }
+    }
+    return res
+}
+
 // Generate trampolines
-if let symsB = try? b.getSymbolTable(),
-   let symsA = try? a.getSymbolTable() {
-    for sym in symsB.symbols {
+// Магик-символы хука и резолв по имени — через СЫРОЙ разбор symtab (nlist_64), а НЕ через
+// SwiftMachO.getSymbolTable: тот падает (BadFormat) на symtab реальных и Swift-бинарей, из-за
+// чего магик-символы _MACHOMERGER_HOOK_* не находились и патч молча не применялся.
+// Резолв имени A учитывает только DEFINED-символы (N_SECT); by-offset (_COLDHOOK_ADDR) его не требует.
+let bSyms = coldhookParseSymtab(dataB.symtab)
+let aSyms = coldhookParseSymtab(dataA.symtab)
+func aSym(_ name: String) -> ColdhookSym? { aSyms.first(where: { $0.name == name && ($0.type & 0x0e) == 0x0e }) }
+if !bSyms.isEmpty {
+    for sym in bSyms {
         if sym.name.starts(with: "_MACHOMERGER_TRAMPOLINE_") {
             let dstName = sym.name.replacingOccurrences(of: "_MACHOMERGER_TRAMPOLINE", with: "")
             
             var dstAddr: UInt64!
             if let d = getMagicSymbolVal(dstName) {
                 dstAddr = d.0
-            } else if let d = symsA.symbol(forName: dstName) {
+            } else if let d = aSym(dstName) {
                 dstAddr = d.value
             }
             
@@ -358,7 +427,7 @@ if let symsB = try? b.getSymbolTable(),
             var dstAddr: UInt64!
             if let d = getMagicSymbolVal(dstName) {
                 dstAddr = d.0
-            } else if let d = symsA.symbol(forName: dstName) {
+            } else if let d = aSym(dstName) {
                 dstAddr = d.value
             }
             
@@ -393,12 +462,12 @@ if let symsB = try? b.getSymbolTable(),
             var dstAddr: UInt64!
             if let d = getMagicSymbolVal(dstName) {
                 dstAddr = d.0
-            } else if let d = symsA.symbol(forName: dstName) {
+            } else if let d = aSym(dstName) {
                 dstAddr = d.value
             }
 
             var origAddr: UInt64!
-            if let o = symsB.symbol(forName: origName) {
+            if let o = bSyms.first(where: { $0.name == origName }) {
                 origAddr = o.value
             }
             
@@ -491,13 +560,12 @@ func coldhookMergeInitOffsets() {
     let bEntries = bData.subdata(in: bInit.dataOff..<(bInit.dataOff + bInit.size))
     let combined = aEntries + bEntries
 
-    // Мёртвая область = старый заголовок B в начале её __TEXT (до первой секции).
-    guard let bTextSeg = relocInfo.segRel.first(where: { $0.0 == "__TEXT" }) else {
-        print("ColdHook: B без __TEXT — не могу слить __init_offsets"); exit(-1)
-    }
-    let bTextPart = (bTextSeg.1.count == 2) ? bTextSeg.1[1] : bTextSeg.1[0]
-    guard bTextPart.isB else {
-        print("ColdHook: __TEXT B не найден — не могу слить __init_offsets"); exit(-1)
+    // Мёртвая область = старый заголовок B в начале сегмента с её __init_offsets (= __TEXT B).
+    // Берём по имени bInit.seg (в append-режиме это переименованный __BTEXT), именно isB-часть.
+    guard let bTextPart = relocInfo.segRel
+            .first(where: { $0.0 == bInit.seg && $0.1.contains(where: { $0.isB }) })?
+            .1.first(where: { $0.isB }) else {
+        print("ColdHook: сегмент B '\(bInit.seg)' не найден — не могу слить __init_offsets"); exit(-1)
     }
     let bTextVM = bTextPart.origCommand.vmAddr &+ bTextPart.offset
     let firstSect = bTextPart.origCommand.sections.map { $0.address }.min() ?? bTextPart.origCommand.vmAddr
@@ -509,12 +577,225 @@ func coldhookMergeInitOffsets() {
 
     var nb = bTextPart.data
     nb.replaceSubrange(0..<combined.count, with: combined)
-    relocInfo.replaceSegment(name: "__TEXT", isB: true, data: nb)
+    relocInfo.replaceSegment(name: bInit.seg, isB: true, data: nb)
 
     coldhookInitMerge = ColdhookInitMerge(combinedVMAddr: bTextVM, combinedSize: UInt64(combined.count))
     print("ColdHook: слил __init_offsets A+B (\(aInit.size + bInit.size) б) в мёртвую область B @ \(String(format: "0x%llx", bTextVM))")
 }
 coldhookMergeInitOffsets()
+
+// ColdHook: APPEND-сборка. Таргет A остаётся на месте (vmaddr/fileoff/фиксапы/entry как есть),
+// сегменты хука B аппендятся после контента A, новый заголовок переписываем В ПРЕДЕЛАХ padding A
+// (между концом LC и первой секцией). Единственный путь для реальных бинарей (они без split-info).
+// Стратегия размещения изолирована в этой функции: при нехватке padding — внятная ошибка, точка
+// под запасные варианты (отдельный хвостовой сегмент / shared-режим: хук по либе с бОльшим запасом).
+func coldhookAppendAssemble() -> Data {
+    let aFile = a.data
+    let ncmdsA = aFile.getGeneric(type: UInt32.self, offset: 0x10)
+
+    guard let aText = dataA.segments.first(where: { $0.0.name == "__TEXT" }) else {
+        print("ColdHook: у таргета нет __TEXT"); exit(-1)
+    }
+    // header region = [0, headerLimit): до первой ненулевой секции __TEXT (туда пишем новый заголовок)
+    let headerLimit = Int(aText.0.sections.compactMap { $0.offset == 0 ? nil : UInt64($0.offset) }.min() ?? 0x4000)
+    // конец контента A = где начинался __LINKEDIT (после A аппендим B)
+    let aContentEnd = Int(dataA.segments.map { $0.0.fileOffset + $0.0.fileSize }.max() ?? 0)
+
+    // --- Разбор LC таргета A: сегменты (вербатим) + прочее (вербатим); LE-указатели и подпись дропаем ---
+    var aSegmentLCs: [Data] = []   // PAGEZERO/TEXT/DATA_CONST/DATA вербатим, в исходном порядке
+    var otherLCs: [Data] = []      // LC_MAIN, LC_LOAD_DYLINKER, dylib A, UUID, BUILD_VERSION, RPATH, ID_DYLIB...
+    var pos = 0x20
+    for _ in 0..<ncmdsA {
+        let cmd = aFile.getGeneric(type: UInt32.self, offset: UInt(pos))
+        let sz  = Int(aFile.getGeneric(type: UInt32.self, offset: UInt(pos + 4)))
+        let raw = aFile.subdata(in: pos..<(pos + sz))
+        if cmd == LC_SEGMENT_64 {
+            var nameBytes = [UInt8](raw.subdata(in: 8..<24)); nameBytes.append(0)
+            if String(cString: nameBytes) != "__LINKEDIT" { aSegmentLCs.append(raw) }  // __LINKEDIT пересоберём
+        } else if cmd == LC_SYMTAB || cmd == LC_DYSYMTAB || cmd == LC_DYLD_CHAINED_FIXUPS
+               || cmd == LC_FUNCTION_STARTS || cmd == LC_DATA_IN_CODE || cmd == LC_CODE_SIGNATURE
+               || cmd == LC_SEGMENT_SPLIT_INFO || cmd == LC_DYLD_EXPORTS_TRIE
+               || cmd == 0x80000022 /*LC_DYLD_INFO_ONLY*/ || cmd == 0x22 /*LC_DYLD_INFO*/ {
+            // дропаем — пересоберём ниже или не нужно
+        } else {
+            otherLCs.append(raw)
+        }
+        pos += sz
+    }
+
+    // ColdHook: если сливали __init_offsets A+B (оба с конструкторами) — здесь LC сегментов A
+    // копируются ВЕРБАТИМ, поэтому секцию __init_offsets A надо перенацелить на объединённый
+    // массив РУЧНО (в interleave это делает generateSegmentLoadCommands, который мы не зовём).
+    if let im = coldhookInitMerge {
+        for i in 0..<aSegmentLCs.count {
+            var lc = aSegmentLCs[i]
+            let segName = lc.subdata(in: 8..<24)
+            guard segName.first(where: { $0 != 0 }) != nil else { continue }
+            let nsects = lc.getGeneric(type: UInt32.self, offset: 0x40)
+            var patched = false
+            for s in 0..<Int(nsects) {
+                let so = 0x48 + s * 0x50
+                let nm = lc.subdata(in: so..<(so + 16))
+                let isInit = nm.prefix("__init_offsets".utf8.count).elementsEqual("__init_offsets".utf8)
+                let typ = lc.getGeneric(type: UInt32.self, offset: UInt(so + 64)) & 0xff
+                if isInit && typ == 0x16 {
+                    lc.replaceSubrange((so + 32)..<(so + 40), with: Data(fromObject: im.combinedVMAddr))   // addr
+                    lc.replaceSubrange((so + 40)..<(so + 48), with: Data(fromObject: im.combinedSize))      // size
+                    lc.replaceSubrange((so + 48)..<(so + 52), with: Data(fromObject: UInt32(im.combinedVMAddr &- coldhookBase))) // offset
+                    patched = true
+                }
+            }
+            if patched { aSegmentLCs[i] = lc }
+        }
+    }
+
+    // --- LC сегментов B + их размещение в файле ---
+    var bSegmentLCs: [Data] = []
+    var bPlacements: [(fileOff: Int, data: Data)] = []
+    var bodyEnd = aContentEnd
+    for entry in relocInfo.segRel where entry.1[0].isB {
+        let part = entry.1[0]
+        let newVM   = part.origCommand.vmAddr &+ part.offset
+        let fileOff = Int(newVM &- coldhookBase)
+
+        var slc = segment_command_64()
+        slc.cmd = UInt32(LC_SEGMENT_64)
+        let nsects = part.origCommand.sections.count
+        slc.cmdsize = UInt32(MemoryLayout<segment_command_64>.size + nsects * MemoryLayout<section_64>.size)
+        _ = withUnsafeMutableBytes(of: &slc.segname) { strcpy($0.baseAddress!, entry.0) }
+        slc.vmaddr   = newVM
+        slc.vmsize   = part.origCommand.vmSize
+        slc.fileoff  = UInt64(fileOff)
+        slc.filesize = UInt64(part.data.count)
+        slc.maxprot  = Int32(bitPattern: part.origCommand.maximumProt.rawValue)
+        slc.initprot = Int32(bitPattern: part.origCommand.protection.rawValue)
+        slc.nsects   = UInt32(nsects)
+        // ВАЖНО: снимаем SG_READ_ONLY (0x10) с сегментов B. Ядро/dyld трактуют read-only
+        // сегменты как единый непрерывный __DATA_CONST-регион; ВТОРОЙ несмежный SG_READ_ONLY
+        // (наш __BDATA_CONST после __BTEXT) ядро отвергает на exec как EBADMACHO. В interleave
+        // этого нет — там __DATA_CONST A и B сливаются в один сегмент. Без флага const-данные
+        // хука просто не хардненятся read-only; фиксапы применяются как обычно.
+        slc.flags    = part.origCommand.flags & ~UInt32(0x10)
+        var lc = Data(fromObject: slc)
+        for sect in part.origCommand.sections {
+            var s = section_64()
+            _ = withUnsafeMutableBytes(of: &s.sectname) { strcpy($0.baseAddress!, sect.section) }
+            _ = withUnsafeMutableBytes(of: &s.segname)  { strcpy($0.baseAddress!, entry.0) }
+            s.addr   = sect.address &+ part.offset
+            s.size   = sect.size
+            s.offset = (sect.offset == 0) ? 0 : UInt32(s.addr &- coldhookBase)
+            s.align  = sect.alignment
+            s.flags  = sect.flags.rawValue
+            s.reserved1 = sect.reserved1
+            s.reserved2 = sect.reserved2
+            s.reserved3 = sect.reserved3
+            // нейтрализация __init_offsets B (записи уже в объединённой секции A — см. coldhookMergeInitOffsets)
+            if coldhookInitMerge != nil, sect.section == "__init_offsets", (sect.flags.rawValue & 0xff) == 0x16 {
+                s.flags = sect.flags.rawValue & ~UInt32(0xff)
+            }
+            lc.appendGeneric(value: s)
+        }
+        bSegmentLCs.append(lc)
+        bPlacements.append((fileOff, part.data))
+        bodyEnd = max(bodyEnd, fileOff + part.data.count)
+    }
+
+    // --- merged __LINKEDIT (A не двигали -> его trie/function-starts валидны вербатим) ---
+    let linkeditFileOff = Int((UInt64(bodyEnd) + pageMaskOff) & pageMask)
+    var linkedit = Data()
+    func pad8() { let r = linkedit.count & 7; if r != 0 { linkedit.append(Data(repeating: 0, count: 8 - r)) } }
+
+    let cfOff = linkeditFileOff + linkedit.count
+    linkedit.append(newChainedFixups); pad8()
+    var trieOff = 0, trieSize = 0
+    if let trie = dataA.exportsTrie, trie.count > 0 { trieOff = linkeditFileOff + linkedit.count; linkedit.append(trie); trieSize = trie.count; pad8() }
+    var fsOff = 0, fsSize = 0
+    if let fs = dataA.functionStarts, fs.count > 0 { fsOff = linkeditFileOff + linkedit.count; linkedit.append(fs); fsSize = fs.count; pad8() }
+    var dcOff = 0, dcSize = 0
+    if let dc = dataA.dataInCode, dc.count > 0 { dcOff = linkeditFileOff + linkedit.count; linkedit.append(dc); dcSize = dc.count; pad8() }
+    let (symCount, symCmds) = emitSymtabDysymtab(infoA: dataA, infoB: dataB, relocInfo: relocInfo, linkedit: &linkedit, linkeditStart: linkeditFileOff)
+
+    func leCmd(_ type: UInt32, _ dataoff: Int, _ datasize: Int) -> Data {
+        var d = Data(fromObject: type)
+        d.appendGeneric(value: UInt32(0x10))
+        d.appendGeneric(value: UInt32(dataoff))
+        d.appendGeneric(value: UInt32(datasize))
+        return d
+    }
+    var leLCs = Data(); var leCount = 0
+    leLCs.append(leCmd(LC_DYLD_CHAINED_FIXUPS, cfOff, newChainedFixups.count)); leCount += 1
+    if trieSize > 0 { leLCs.append(leCmd(LC_DYLD_EXPORTS_TRIE, trieOff, trieSize)); leCount += 1 }
+    if fsSize   > 0 { leLCs.append(leCmd(UInt32(LC_FUNCTION_STARTS), fsOff, fsSize)); leCount += 1 }
+    if dcSize   > 0 { leLCs.append(leCmd(UInt32(LC_DATA_IN_CODE), dcOff, dcSize)); leCount += 1 }
+    leLCs.append(symCmds); leCount += symCount
+
+    var leSeg = segment_command_64()
+    leSeg.cmd = UInt32(LC_SEGMENT_64)
+    leSeg.cmdsize = UInt32(MemoryLayout<segment_command_64>.size)
+    _ = withUnsafeMutableBytes(of: &leSeg.segname) { strcpy($0.baseAddress!, "__LINKEDIT") }
+    leSeg.vmaddr   = coldhookBase &+ UInt64(linkeditFileOff)
+    leSeg.vmsize   = (UInt64(linkedit.count) + pageMaskOff) & pageMask
+    leSeg.fileoff  = UInt64(linkeditFileOff)
+    leSeg.filesize = UInt64(linkedit.count)
+    leSeg.maxprot  = VM_PROT_READ
+    leSeg.initprot = VM_PROT_READ
+    leSeg.nsects   = 0
+    leSeg.flags    = 0
+
+    // --- LC по порядку: сегменты [A..., B..., __LINKEDIT], затем прочее + новые dylib + LE-указатели ---
+    var lcs = Data(); var ncmds = 0
+    for d in aSegmentLCs { lcs.append(d); ncmds += 1 }
+    for d in bSegmentLCs { lcs.append(d); ncmds += 1 }
+    lcs.appendGeneric(value: leSeg); ncmds += 1
+    for d in otherLCs { lcs.append(d); ncmds += 1 }
+    for d in coldhookNewDylibCmds { lcs.append(d); ncmds += 1 }
+    lcs.append(leLCs); ncmds += leCount
+
+    var hdr = mach_header_64()
+    hdr.magic = MH_MAGIC_64
+    hdr.cputype = CPU_TYPE_ARM64
+    hdr.cpusubtype = Int32(bitPattern: a.cpuSubType)
+    hdr.filetype = a.filetype.rawValue
+    hdr.flags = aFile.getGeneric(type: UInt32.self, offset: 0x18)
+    hdr.ncmds = UInt32(ncmds)
+    hdr.sizeofcmds = UInt32(lcs.count)
+    var header = Data(fromObject: hdr)
+    header.append(lcs)
+
+    guard header.count <= headerLimit else {
+        print("ColdHook: новый заголовок (\(header.count) б) не влез в padding таргета (\(headerLimit) б). "
+            + "Запасные варианты: отдельный хвостовой сегмент или shared-режим (хук по либе с бОльшим запасом).")
+        exit(-1)
+    }
+    header.append(Data(repeating: 0, count: headerLimit - header.count))
+
+    // --- Файл: [новый заголовок + секции A] + сегменты B + __LINKEDIT ---
+    // A-контент берём из relocInfo, а НЕ из aFile: там уже патчи хука (HOOK-инструкция в
+    // первой инструкции цели, сохранённый ORIG). aFile — оригинал без патчей.
+    var out = Data()
+    for entry in relocInfo.segRel where !entry.1[0].isB {
+        let part = entry.1[0]
+        if part.data.isEmpty { continue }   // __PAGEZERO (нет файлового контента)
+        let fo = Int(part.origCommand.fileOffset)
+        if out.count < fo { out.append(Data(repeating: 0, count: fo - out.count)) }
+        out.append(part.data)
+    }
+    out.replaceSubrange(0..<headerLimit, with: header)
+    for p in bPlacements {
+        if out.count < p.fileOff { out.append(Data(repeating: 0, count: p.fileOff - out.count)) }
+        out.append(p.data)
+    }
+    if out.count < linkeditFileOff { out.append(Data(repeating: 0, count: linkeditFileOff - out.count)) }
+    out.append(linkedit)
+    return out
+}
+
+if coldhookAppendMode {
+    let out = coldhookAppendAssemble()
+    try out.write(to: URL(fileURLWithPath: coldhookPosArgs[2]))
+    print("Done! (append-режим: таргет на месте, хук аппендом)")
+    exit(0)
+}
 
 // Generate most of the MachO content, except header
 var machOData = Data()

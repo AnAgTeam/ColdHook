@@ -10,5 +10,14 @@ tests/macos/build_*/
 __pycache__/
 *.pyc
 
+# local secrets / real identifiers — never commit
+.coldhook.env
+
+# device build output / Xcode DerivedData
+build_device/
+**/build_device/
+**/build_analyze/
+**/DerivedData/
+
 # macOS
 .DS_Store

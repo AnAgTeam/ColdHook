@@ -140,8 +140,13 @@ func mergeChainedFixups(infoA: MachOMergeData, infoB: MachOMergeData, relocInfo:
         exit(-1)
     }
     
-    guard importsFormatA == importsFormatB else {
-        print("Chained fixups imports format must be the same for both binaries!")
+    // ColdHook: форматы импортов должны совпадать ТОЛЬКО если у хука B реально есть импорты
+    // для дозаписи. Если у B импортов нет (importsCountB == 0, частый случай — хук по оффсету
+    // без внешних вызовов), выход берёт таблицу импортов A вербатим в её формате (1/2/3),
+    // дописывать нечего — формат A неважен. Это снимает ложный отказ на реальных Swift-таргетах
+    // с форматом импортов 2/3.
+    guard importsCountB == 0 || importsFormatA == importsFormatB else {
+        print("Chained fixups imports format must be the same for both binaries (B has imports)!")
         exit(-1)
     }
     
@@ -190,32 +195,42 @@ func mergeChainedFixups(infoA: MachOMergeData, infoB: MachOMergeData, relocInfo:
     func mapExternalImport(bOrdinal: UInt32) -> UInt32? {
         guard Int(bOrdinal) < bImports.count else { return nil }
         let imp = bImports[Int(bOrdinal)]
-        guard imp.libOrd >= 1, Int(imp.libOrd) <= bDylibs.count else { return nil } // только нормальные ordinals
-        let dylibName = bDylibs[Int(imp.libOrd) - 1]
 
-        // dylib-ordinal в merged: либо существующий dylib таргета, либо новый (по опции).
+        // dylib-ordinal в merged.
         let dylibOrd: UInt8
-        if let aIdx = aDylibs.firstIndex(of: dylibName) {
-            dylibOrd = UInt8(aIdx + 1)
-        } else if coldhookAllowNewDylibs {
-            if let existing = newDylibOrd[dylibName] {
-                dylibOrd = existing
-            } else {
-                guard let cmdData = coldhookDylibCmdData(machOB, dylibName) else {
-                    print("ColdHook: не нашёл команду загрузки '\(dylibName)' в хуке")
-                    exit(-1)
+        if imp.libOrd == 0 || imp.libOrd >= 0xFD {
+            // Спец-ординалы chained fixups: 0=main-executable, 0xFD=weak, 0xFE=flat, 0xFF=self
+            // lookup. Их НЕ маппим на конкретный dylib — оставляем как есть, загрузчик резолвит
+            // символ глобально по имени. Swift/C++ рантайм тянет такие (напр. operator delete
+            // __ZdlPv через flat lookup). Дедуп по (спец-ординал|имя).
+            dylibOrd = UInt8(imp.libOrd & 0xFF)
+        } else if Int(imp.libOrd) <= bDylibs.count {
+            let dylibName = bDylibs[Int(imp.libOrd) - 1]
+            // либо существующий dylib таргета, либо новый (по опции).
+            if let aIdx = aDylibs.firstIndex(of: dylibName) {
+                dylibOrd = UInt8(aIdx + 1)
+            } else if coldhookAllowNewDylibs {
+                if let existing = newDylibOrd[dylibName] {
+                    dylibOrd = existing
+                } else {
+                    guard let cmdData = coldhookDylibCmdData(machOB, dylibName) else {
+                        print("ColdHook: не нашёл команду загрузки '\(dylibName)' в хуке")
+                        exit(-1)
+                    }
+                    // dylib A занимают 1..aDylibs.count, новые идут следом.
+                    let ord = UInt8(aDylibs.count + coldhookNewDylibCmds.count + 1)
+                    newDylibOrd[dylibName] = ord
+                    coldhookNewDylibCmds.append(cmdData)   // main.swift доэмитит LC_LOAD_DYLIB
+                    dylibOrd = ord
                 }
-                // dylib A занимают 1..aDylibs.count, новые идут следом.
-                let ord = UInt8(aDylibs.count + coldhookNewDylibCmds.count + 1)
-                newDylibOrd[dylibName] = ord
-                coldhookNewDylibCmds.append(cmdData)   // main.swift доэмитит LC_LOAD_DYLIB
-                dylibOrd = ord
+            } else {
+                print("ColdHook: импорт B '\(imp.name)' тянет dylib '\(dylibName)', которого НЕТ в "
+                    + "LC_LOAD_DYLIB таргета. Разреши --allow-new-dylibs (вставит LC_LOAD_DYLIB) "
+                    + "или убери эту зависимость из хука.")
+                exit(-1)
             }
         } else {
-            print("ColdHook: импорт B '\(imp.name)' тянет dylib '\(dylibName)', которого НЕТ в "
-                + "LC_LOAD_DYLIB таргета. Разреши --allow-new-dylibs (вставит LC_LOAD_DYLIB) "
-                + "или убери эту зависимость из хука.")
-            exit(-1)
+            return nil  // ordinal вне диапазона
         }
 
         let key = "\(dylibOrd)|\(imp.name)"
@@ -237,7 +252,11 @@ func mergeChainedFixups(infoA: MachOMergeData, infoB: MachOMergeData, relocInfo:
 
     if importsCountB != 0 {
         let cf = try! b.getChainedFixups()
-        let symTable = try! a.getSymbolTable()
+        // symtab таргета A — ОПЦИОНАЛЬНО: SwiftMachO не всегда разбирает symtab реальных
+        // бинарей (Swift/стрипнутые) -> BadFormat. Для дозаписи импортов он нужен лишь чтобы
+        // отличить импорт B, резолвящийся ВНУТРЬ A (defined-символ), от внешнего. Если symtab
+        // недоступен — все импорты B (кроме магик-символов) считаем внешними и дедупим/биндим.
+        let symTable = try? a.getSymbolTable()
 
         // Резолв импорта B внутрь образа (магик-символ или symtab таргета A).
         // ВАЖНО: матчим в symtab A только DEFINED-символы (N_SECT, n_type & 0x0e == 0x0e).
@@ -247,7 +266,7 @@ func mergeChainedFixups(infoA: MachOMergeData, infoB: MachOMergeData, relocInfo:
         // сдедупится с импортом A по (dylib|имя).
         func resolveInternal(_ sym: String) -> (addr: UInt64, isB: Bool)? {
             if let d = getMagicSymbolVal(sym) { return (d.0, d.1) }
-            if let d = symTable.symbol(forName: sym), (d.type & 0x0e) == 0x0e {
+            if let d = symTable?.symbol(forName: sym), (d.type & 0x0e) == 0x0e {
                 return (d.value, false)
             }
             return nil
