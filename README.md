@@ -30,6 +30,7 @@ python3 tests/macos/run_app.py       # полный .app: собрать -> cold
 python3 tests/macos/run_ctor.py      # конструкторы (%ctor) И у таргета, И у хука -> оба
 python3 tests/macos/run_sharedimport.py  # общий импорт (write) у таргета и хука -> bind
 python3 tests/macos/run_nosplit.py   # append-режим: таргет БЕЗ split-info (exe + dylib)
+python3 tests/macos/run_export.py    # хук ЭКСПОРТА по имени (CH_HOOK_SYM, C) + ORIG
 python3 tests/macos/run_swift.py     # Swift by-name хук + ORIG (PC-relative пролог)
 ```
 
@@ -72,6 +73,10 @@ CH_HOOK_ADDR(0xb99a8, fix_domain);
 
 Конфиг для такого таргета — просто `binary` + `sources` (оффсеты живут в коде). Строка-модуль
 `CH_HOOK_ADDR("Bin", off, fn)` зарезервирована под будущий shared-режим (одна либа на много бинарей).
+
+Готовые сэмплы (copy-paste под свою цель): `tests/hooks/export_byname` (хук экспорта по имени) и
+`tests/hooks/hook_byaddr` (хук по адресу) — оба C, с `ORIG` и probe-конструктором; Swift —
+`tests/hooks/swift_replace`.
 
 Паттерн цели: `domain_for(env)` отдаёт домен для известного окружения, иначе падает
 в `__builtin_trap()` (модель `assertionFailure`). Хук чинит провальный путь, известное
