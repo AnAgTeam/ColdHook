@@ -6,6 +6,9 @@
 // стоковому logos. См. README.
 
 // Пример: detour C-функции по ИМЕНИ символа (из `nm <target-binary>`). Замени на свою цель.
+// Цель можно задать и АДРЕСОМ-литералом: %hookf(ret, 0x100004488, args) -> CH_HOOK_ADDR
+// (расширение ColdHook; такой твик не соберётся под стоковый Substrate). Адрес через
+// %init(имя=адрес) НЕЛЬЗЯ — это рантайм-указатель MSHookFunction, не наш статический путь.
 %hookf(const char *, example_function) {
     const char *result = %orig;                 // вызвать оригинал
     NSLog(@"[@@PROJECTNAME@@] orig returned: %s", result);
