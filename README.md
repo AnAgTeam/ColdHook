@@ -13,7 +13,7 @@ coldhook/             Python-оркестратор (info | merge | patch | ipa)
 coldhook/include/     coldhook.h — макросы хука (CH_HOOK_ADDR / CH_HOOK_SYM / CH_ORIG / _GATED)
 coldhook/logos_prepass.py  Logos-пре-пасс: %hookf -> статика ColdHook, остальное -> сток logos.pl
 coldhook/substrate/   clean-room шим Substrate-API (MSHookMessageEx -> рантайм-свизл ObjC)
-coldhook/templates/   NIC-шаблон «ColdHook Tweak» (ставится `coldhook install-theos`)
+coldhook/templates/   NIC-шаблоны «ColdHook Tweak» (Logos) и «ColdHook Swift Tweak» (install-theos)
 scripts/              build_install.py — сборка → merge → resign → установка на устройство
 tests/macos/          запускаемые macOS-харнессы (arm64) — полигоны без устройства
 tests/hooks/          готовые сэмплы хука (swift_replace, export_byname, hook_byaddr)
@@ -63,6 +63,9 @@ Swift-хук вмёрджен в подписанное приложение, п
 Замена — Swift-функция с тем же ABI (`@_silgen_name`), `CH_ORIG(fn)` зовёт оригинал. Первая
 инструкция-пролог может быть PC-relative (`cbz`/`cbnz`/`tbz` на guard'ах) — мёрджер переэнкодит
 её под адрес ORIG-слота. `@objc dynamic`-методы можно хукать и обычным ObjC-путём (через `NSString`).
+
+Шаблон под theos — `coldhook install-theos` → `nic.pl` → «ColdHook Swift Tweak» → `make` (без
+пре-пасса/шима, чистый swiftc + glue.c). Готовый пример — `tests/hooks/swift_replace`.
 
 ### Хуки по оффсету в коде (`CH_HOOK_ADDR`)
 
