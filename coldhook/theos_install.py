@@ -1,30 +1,35 @@
-"""`coldhook install-theos` — поставить NIC-шаблон «ColdHook Tweak» в $THEOS.
+"""`coldhook install-theos` — поставить NIC-шаблоны ColdHook в $THEOS.
 
-Генерит .nic (формат NIC1) из coldhook/templates/coldhook-tweak/ и кладёт в $THEOS/templates/,
-чтобы `nic.pl` показывал шаблон в списке. Абсолютный путь к репозиторию ColdHook вшивается в
-Makefile шаблона (@@COLDHOOK@@), чтобы созданные проекты ссылались на этот клон. Остальные
-@@…@@ (PROJECTNAME/PACKAGENAME/AUTHOR) — промпты nic.pl на этапе создания проекта.
+Для каждого шаблона из coldhook/templates/* генерит .nic (формат NIC1) и кладёт в $THEOS/templates/,
+чтобы `nic.pl` показывал его в списке. Абсолютный путь к репозиторию ColdHook вшивается в Makefile
+шаблона (@@COLDHOOK@@), чтобы созданные проекты ссылались на этот клон. Остальные @@…@@
+(PROJECTNAME/PACKAGENAME/USER) — встроенные переменные nic.pl (свои prompt'ы НЕ объявляем).
 """
 import os
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, ".."))
-TEMPLATE_DIR = os.path.join(HERE, "templates", "coldhook-tweak")
+TEMPLATES_DIR = os.path.join(HERE, "templates")
 
-# Файлы шаблона в порядке записи в .nic
-FILES = ["Makefile", "control", "Tweak.x", "README.md"]
+# (каталог шаблона, отображаемое имя в nic.pl)
+TEMPLATES = [
+    ("coldhook-tweak", "ColdHook Tweak"),
+    ("coldhook-swift-tweak", "ColdHook Swift Tweak"),
+]
 
 
-def build_nic(coldhook_root: str) -> str:
-    """Собрать текст .nic (NIC1). @@COLDHOOK@@ вшиваем сразу, остальные @@…@@ оставляет nic.pl.
-
-    СВОИХ prompt'ов НЕ объявляем: nic.pl сам спрашивает Project Name/Package Name/Author и ставит
-    встроенные @@PROJECTNAME@@/@@PACKAGENAME@@/@@USER@@. Объявить их же = двойной опрос."""
+def build_nic(template_dir: str, name: str, coldhook_root: str) -> str:
+    """Собрать текст .nic (NIC1) из всех файлов каталога шаблона. @@COLDHOOK@@ вшиваем сразу,
+    остальные @@…@@ оставляет nic.pl. Своих prompt'ов нет — nic.pl сам ставит встроенные
+    @@PROJECTNAME@@/@@PACKAGENAME@@/@@USER@@ (иначе он спрашивал бы имя/пакет/автора дважды)."""
     # Заголовок 'nic 1' -> nic.pl грузит формат NIC::Formats::NIC1 (текстовый). Версия должна
     # быть \w+ без точки (иначе регекс _loadNIC не матчит и файл уходит в NICTar -> не парсится).
-    out = ['nic 1', 'name "ColdHook Tweak"']
-    for rel in FILES:
-        with open(os.path.join(TEMPLATE_DIR, rel)) as f:
+    out = ['nic 1', f'name "{name}"']
+    for rel in sorted(os.listdir(template_dir)):
+        path = os.path.join(template_dir, rel)
+        if not os.path.isfile(path):
+            continue
+        with open(path) as f:
             content = f.read()
         content = content.replace("@@COLDHOOK@@", coldhook_root)
         if not content.endswith("\n"):
@@ -35,20 +40,25 @@ def build_nic(coldhook_root: str) -> str:
     return "\n".join(out) + "\n"
 
 
-def install(theos: str | None = None, coldhook_root: str = ROOT) -> str:
+def install(theos: str | None = None, coldhook_root: str = ROOT) -> list[str]:
     theos = theos or os.environ.get("THEOS") or os.path.expanduser("~/theos")
     if not os.path.isdir(theos):
         raise FileNotFoundError(f"THEOS не найден: {theos} (задай переменную THEOS)")
     tdir = os.path.join(theos, "templates")
     os.makedirs(tdir, exist_ok=True)
-    dest = os.path.join(tdir, "coldhook-tweak.nic")
-    with open(dest, "w") as f:
-        f.write(build_nic(coldhook_root))
-    return dest
+    dests = []
+    for sub, name in TEMPLATES:
+        dest = os.path.join(tdir, f"{sub}.nic")
+        with open(dest, "w") as f:
+            f.write(build_nic(os.path.join(TEMPLATES_DIR, sub), name, coldhook_root))
+        dests.append(dest)
+    return dests
 
 
 def cmd_install_theos(args) -> int:
-    dest = install(theos=getattr(args, "theos", None))
-    print(f"Шаблон «ColdHook Tweak» установлен: {dest}")
-    print("Теперь: nic.pl  ->  выбери 'ColdHook Tweak'  ->  пиши Tweak.x  ->  make")
+    dests = install(theos=getattr(args, "theos", None))
+    print("Шаблоны установлены:")
+    for d in dests:
+        print(f"  {d}")
+    print("Теперь: nic.pl  ->  «ColdHook Tweak» (Logos) или «ColdHook Swift Tweak»  ->  make")
     return 0

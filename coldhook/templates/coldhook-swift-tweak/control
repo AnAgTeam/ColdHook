@@ -1,0 +1,7 @@
+Package: @@PACKAGENAME@@
+Name: @@PROJECTNAME@@
+Version: 0.0.1
+Architecture: iphoneos-arm64
+Description: Swift-твик на ColdHook (статический хук через merge)
+Author: @@USER@@
+Section: Tweaks
