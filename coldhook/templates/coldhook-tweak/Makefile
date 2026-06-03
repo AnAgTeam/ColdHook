@@ -14,7 +14,10 @@ COLDHOOK = @@COLDHOOK@@
 # пишешь только Tweak.x, а .xm — внутренний build-артефакт.
 _CHGEN := $(shell mkdir -p .coldhook && python3 $(COLDHOOK)/coldhook/logos_prepass.py --strip-only Tweak.x > .coldhook/Tweak.xm)
 
-@@PROJECTNAME@@_FILES = .coldhook/Tweak.xm $(COLDHOOK)/coldhook/substrate/substrate.m
+# substrate.m — шим MSHookMessageEx (ObjC %hook -> method_setImplementation).
+# coldhook_objc.m — бутстрап, уникует selref'ы твика (после merge они в __BDATA_CONST, ObjC-runtime
+# их сам не находит). Нужен для %hook; для не-ObjC твика — no-op.
+@@PROJECTNAME@@_FILES = .coldhook/Tweak.xm $(COLDHOOK)/coldhook/substrate/substrate.m $(COLDHOOK)/coldhook/substrate/coldhook_objc.m
 @@PROJECTNAME@@_CFLAGS = -fobjc-arc -I$(COLDHOOK)/coldhook/include -I$(COLDHOOK)/coldhook/substrate
 # -fixup_chains + -add_split_seg_info: обязательны, чтобы dylib мёрджился ColdHook.
 @@PROJECTNAME@@_LDFLAGS = -Wl,-no_warn_inits -Wl,-fixup_chains -Xlinker -add_split_seg_info

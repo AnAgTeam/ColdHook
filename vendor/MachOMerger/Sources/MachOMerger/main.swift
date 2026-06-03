@@ -710,6 +710,26 @@ func coldhookAppendAssemble() -> Data {
         pos += sz
     }
 
+    // ColdHook: dyld требует SG_READ_ONLY (0x10) на __DATA_CONST/__AUTH_CONST у ОБЫЧНОГО (не-кэш)
+    // образа. Корень бага: таргет линкуется с -add_split_seg_info (нужно мёрджеру) -> ld считает его
+    // кандидатом в dyld shared cache и НЕ ставит SG_READ_ONLY (для кэша read-only накладывает сборщик
+    // кэша постранично, флаг был бы избыточен). Одиночный split-seg dylib dyld грузит снисходительно.
+    // Но мы ВЫБРАСЫВАЕМ LC_SEGMENT_SPLIT_INFO (см. drop-лист LC выше) -> на выходе обычный dylib, у
+    // которого __DATA_CONST без флага -> строгая проверка dyld -> отказ ("__DATA_CONST segment missing
+    // SG_READ_ONLY flag"). Раз сняли split-info и сделали образ обычным — обязаны вернуть и флаг.
+    // Проставляем на сегментах A; у B флаг СНИМАЕТСЯ (~767) -> read-only регион ровно один, ядро не
+    // ругается на «второй несмежный». Если у A флаг уже был — |= 0x10 это no-op.
+    for i in 0..<aSegmentLCs.count {
+        var nb = [UInt8](aSegmentLCs[i].subdata(in: 8..<24)); nb.append(0)
+        let name = String(cString: nb)
+        if name == "__DATA_CONST" || name == "__AUTH_CONST" {
+            var lc = aSegmentLCs[i]
+            let flags = lc.getGeneric(type: UInt32.self, offset: 0x44)
+            lc.replaceSubrange(0x44..<0x48, with: Data(fromObject: flags | 0x10))
+            aSegmentLCs[i] = lc
+        }
+    }
+
     // ColdHook: если сливали __init_offsets A+B (оба с конструкторами) — здесь LC сегментов A
     // копируются ВЕРБАТИМ, поэтому секцию __init_offsets A надо перенацелить на объединённый
     // массив РУЧНО (в interleave это делает generateSegmentLoadCommands, который мы не зовём).

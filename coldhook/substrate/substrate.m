@@ -8,6 +8,11 @@
 // Корректно ловит диспатч (подклассы/категории) — этим ObjC и оставляем за Logos-рантаймом.
 void MSHookMessageEx(Class cls, SEL sel, IMP hook, IMP *old) {
     if (!cls) { if (old) *old = NULL; return; }
+    // Дефенсивно уникуем селектор регистрации: если ObjC-бутстрап (coldhook_objc.m) ещё не
+    // отработал (порядок конструкторов), sel может быть неуникнутым указателем на cstring ->
+    // class_getInstanceMethod промахнётся. sel_registerName канонизирует (для уже-канонического
+    // sel это no-op). selref'ы в ТЕЛЕ хука уникует бутстрап (к вызову хука он уже отработал).
+    if (sel) sel = sel_registerName((const char *)(void *)sel);
     Method m = class_getInstanceMethod(cls, sel);
     if (!m)   { if (old) *old = NULL; return; }
     IMP prev = method_setImplementation(m, hook);
