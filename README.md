@@ -12,7 +12,7 @@ MachOMerger), без рантайм-кодогенерации и W^X-перех
 coldhook/             Python-оркестратор (info | merge | patch | ipa)
 coldhook/include/     coldhook.h — макросы хука (CH_HOOK_ADDR / CH_HOOK_SYM / CH_ORIG / _GATED)
 coldhook/logos_prepass.py  Logos-пре-пасс: %hookf -> статика ColdHook, остальное -> сток logos.pl
-coldhook/substrate/   clean-room шим Substrate-API (MSHookMessageEx -> рантайм-свизл ObjC)
+coldhook/substrate/   clean-room шим Substrate-API (MSHookMessageEx -> свизл ObjC) + coldhook_objc.m (уникер selref'ов твика)
 coldhook/templates/   NIC-шаблоны «ColdHook Tweak» (Logos) и «ColdHook Swift Tweak» (install-theos)
 scripts/              build_install.py — сборка → merge → resign → установка на устройство
 tests/macos/          запускаемые macOS-харнессы (arm64) — полигоны без устройства
@@ -44,6 +44,7 @@ python3 tests/macos/run_nosplit.py   # append-режим: таргет БЕЗ sp
 python3 tests/macos/run_export.py    # хук ЭКСПОРТА по имени (CH_HOOK_SYM, C) + ORIG
 python3 tests/macos/run_gated.py     # GATED-хук: статически установлен, рантайм-переключаемый
 python3 tests/macos/run_logos.py     # Logos %hookf -> статика ColdHook (пре-пасс + сток logos.pl)
+python3 tests/macos/run_objchook.py  # Logos ObjC %hook через ColdTheos (свизл + %orig + тело)
 python3 tests/macos/run_swift.py     # Swift by-name хук + ORIG (PC-relative пролог)
 ```
 
@@ -136,7 +137,14 @@ python3 -m coldhook merge --target <bin> --src <dylib> --out <patched>   # ин�
 | `%hookf` | статика — `CH_HOOK_SYM`, патч 1-й инструкции на merge; `%orig` -> `CH_ORIG` |
 | `%hookf` в `%group` | гейтируемый — включается рантаймом на `%init(Group)` |
 | `%ctor` / `%orig` | как обычно (конструктор сливается через `__init_offsets`) |
-| ObjC `%hook` | компилится (шим `MSHookMessageEx`), но через merge ПОКА не активен — приедет с shared-режимом |
+| ObjC `%hook` | работает — свизл `method_setImplementation` (шим `MSHookMessageEx`); selref'ы твика уникует бутстрап `coldhook_objc.m` после merge |
+
+ObjC `%hook` через merge: append переименовывает сегменты твика (`__DATA_CONST` → `__BDATA_CONST`),
+из-за чего ObjC-runtime не уникует его selref'ы (`@selector` держит свою копию строки, а не
+канонический `SEL`). Бутстрап-конструктор `coldhook/substrate/coldhook_objc.m` уникует их вручную
+на загрузке — после этого свизл и message-send'ы в теле хука работают. Это покрывает свизл
+существующих методов (99% `%hook`) и `%new` в существующем классе. Свой ObjC-класс/категория в
+твике пока требует доп. шага (`objc_registerClassPair`). Прогон — `tests/macos/run_objchook.py`.
 
 Цель `%hookf` — по имени (`%hookf(ret, symbol, args)`, канон, переносимо) или по адресу-литералу
 (`%hookf(ret, 0xADDR, args)` → `CH_HOOK_ADDR`, расширение ColdHook, под стоковый Substrate не
@@ -189,8 +197,8 @@ python3 -m coldhook ipa    <in.ipa|.app> -c cfg -o <out>       # merge в бан
 - [x] Гейтируемые хуки (`CH_HOOK_SYM_GATED`/`*_ADDR_GATED`): статически установлен, рантайм-переключаемый (thunk через указатель в `__DATA`, дефолт = ORIG)
 - [x] Logos-интеграция (ColdTheos): `%hookf`/`%ctor`/`%group` статикой через пре-пасс + сток-logos; NIC-шаблон + `install-theos`; substrate-шим
 - [x] Робастность мёрджера на debug/STABS-dylib (theos `make`): STAB не путается с реальными символами
-- [ ] ObjC `%hook` через merge (selref'ы B не уникаются в append) — придёт с shared-режимом
-- [ ] exports trie / multi-chain / FAT для arm64e на устройстве / Swift `@Hook`-фасад (`docs/swift-dsl.md`)
+- [x] ObjC `%hook` через merge (Путь B): бутстрап `coldhook_objc.m` уникует selref'ы твика из `__BDATA_CONST` после merge; append восстанавливает `SG_READ_ONLY` на const-сегментах A; свизл существующих методов + `%new`. Прогоны — `run_objc.py`, `run_objchook.py`
+- [ ] ObjC: свой класс/категория в твике (`objc_registerClassPair`) / exports trie / multi-chain / FAT для arm64e на устройстве / Swift `@Hook`-фасад (`docs/swift-dsl.md`) / sig-prescan (`docs/sig-prescan.md`) / shared-режим (`docs/shared-mode.md`)
 
 ## Лицензии
 

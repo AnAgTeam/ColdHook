@@ -222,6 +222,6 @@ class RelocInfo {
     }
     
     public func translate(address: UInt64, isB: Bool) -> UInt64 {
-        address + segment(forOrigAddress: address, isB: isB)!.2
+        return address + segment(forOrigAddress: address, isB: isB)!.2
     }
 }
