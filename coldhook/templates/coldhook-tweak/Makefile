@@ -12,7 +12,13 @@ COLDHOOK = @@COLDHOOK@@
 # остальное (ObjC %hook, %ctor, %group/%init) остаётся Logos. Результат — .coldhook/Tweak.xm,
 # создаётся ДО проверки _FILES; logos на нём зовёт сам theos (со своими LOGOSFLAGS). Так ты
 # пишешь только Tweak.x, а .xm — внутренний build-артефакт.
-_CHGEN := $(shell mkdir -p .coldhook && python3 $(COLDHOOK)/coldhook/logos_prepass.py --strip-only Tweak.x > .coldhook/Tweak.xm)
+# ВАЖНО: $(shell) проглатывает ненулевой exit, а '> Tweak.xm' уже обрезал файл -> без проверки
+# make слинковал бы ПУСТОЙ .xm (тихий no-op хук). Ловим код возврата в _CHRC и валим через
+# $(error). stderr пре-пасса (причина) идёт на терминал выше.
+_CHRC := $(shell mkdir -p .coldhook && python3 $(COLDHOOK)/coldhook/logos_prepass.py --strip-only Tweak.x 1> .coldhook/Tweak.xm; echo $$?)
+ifneq ($(_CHRC),0)
+$(error ColdHook: пре-пасс Tweak.x упал (сообщение выше) — сборка остановлена)
+endif
 
 # substrate.m — шим MSHookMessageEx (ObjC %hook -> method_setImplementation).
 # coldhook_objc.m — бутстрап, уникует selref'ы твика (после merge они в __BDATA_CONST, ObjC-runtime

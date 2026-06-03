@@ -23,9 +23,12 @@ CH_HOOK_SYM glue). Так logos.pl получает валидный .x уже �
 Резолв «найти символ в рантайме» (MSFindSymbol-форма) статикой невозможен — не поддерживаем.
 
 Адрес цели задаётся ТОЛЬКО литералом в самом %hookf (%hookf(ret, 0xADDR, args)). Форму Logos
-`%init(имя = адрес)` НЕ читаем: там адрес — рантайм-указатель под MSHookFunction (вычисляется в
-конструкторе), а нам он нужен на этапе merge. by-address — расширение ColdHook (в каноне Logos
-второй слот %hookf = имя символа), такой твик не соберётся под стоковый Substrate.
+`%init(имя = выражение)` для %hookf-цели мы НЕ принимаем и ПАДАЕМ на сборке с внятной ошибкой
+(fail-loud): там адрес — рантайм-указатель под MSHookFunction (вычисляется в конструкторе), а нам
+он нужен на этапе merge — это архитектурная несовместимость, а не недоделка. by-address —
+расширение ColdHook (в каноне Logos второй слот %hookf = имя символа), такой твик не соберётся
+под стоковый Substrate. Форма `%init(Class = objc_getClass(...))` для ObjC-КЛАССА не затрагивается
+(она рантаймовая и легитимна) — ругаемся только когда LHS = имя %hookf-функции.
 """
 import os
 import re
@@ -155,6 +158,28 @@ def _emit_hookf(ret, target, argdecls, body, gated, group):
     return fid, "\n".join(out)
 
 
+def _check_init_runtime_addr(text, blanked, hookf_names):
+    """Fail-loud на %init(funcname = expr), где funcname — цель %hookf: рантайм-указатель под
+    MSHookFunction статически неразрешим. %init(Class = expr) для ObjC-класса не трогаем (LHS не
+    в hookf_names). Скан comment-aware: позиции берём из blanked, содержимое — из text."""
+    for m in re.finditer(r"%init\b", blanked):
+        j = m.end()
+        while j < len(text) and text[j] in " \t": j += 1
+        if j >= len(text) or text[j] != "(":   # голый %init -> ungrouped, без аргументов
+            continue
+        content = text[j + 1:_scan_block(text, j, "(", ")") - 1]
+        for part in _split_top_commas(content):
+            mm = re.match(r"\s*([A-Za-z_]\w*)\s*=", part)
+            if mm and mm.group(1) in hookf_names:
+                name = mm.group(1)
+                raise ValueError(
+                    f"%init({name} = ...) — рантайм-адрес C-функции несовместим со статическим "
+                    f"бэкендом ColdHook: это указатель под MSHookFunction, вычисляемый в "
+                    f"конструкторе, а ColdHook ставит хук на этапе merge (процесса ещё нет). "
+                    f"Задай цель именем символа: %hookf(ret, {name}, args), либо литералом "
+                    f"адреса: %hookf(ret, 0xADDR, args). См. README (Logos-интеграция).")
+
+
 def prepass(text):
     """Вернуть (новый текст .x, список (group, fid) для gated-хуков)."""
     # %group/%end ищем по ЗАБЕЛЕННОМУ тексту -> закомментированные/строковые не считаются.
@@ -172,6 +197,7 @@ def prepass(text):
         return None
 
     gated_hooks = []
+    hookf_names = set()          # имена %hookf-целей (by-name) — для детекта %init(name=expr)
     result, i, n = [], 0, len(text)
     used_include = False
     while i < n:
@@ -205,6 +231,8 @@ def prepass(text):
 
             parts = _split_top_commas(header)
             ret, target, argdecls = parts[0], parts[1], parts[2:]
+            if re.fullmatch(r"[A-Za-z_]\w*", target.strip()):
+                hookf_names.add(target.strip())
             grp = group_at(i)
             fid, c = _emit_hookf(ret, target, argdecls, body, gated=bool(grp), group=grp)
             if grp:
@@ -217,6 +245,7 @@ def prepass(text):
             continue
         result.append(text[i]); i += 1
 
+    _check_init_runtime_addr(text, blanked, hookf_names)   # fail-loud на %init(hookf = рантайм-addr)
     out = "".join(result)
     # gated: на %init(Group) включаем гейты этой группы. %init(Group) logos разворачивает в
     # {...}-БЛОК (statement), поэтому оборачиваем в do{ enable; %init(Group); }while(0) — корректно
@@ -251,7 +280,11 @@ def main(argv):
     src = argv[0]
     with open(src) as f:
         text = f.read()
-    processed = prepass(text)
+    try:
+        processed = prepass(text)
+    except ValueError as e:
+        sys.stderr.write(f"ColdHook-пре-пасс ({os.path.basename(src)}): {e}\n")
+        return 1
 
     # theos-режим: отдаём преобразованный Logos-исходник как есть; logos.pl зовёт make.
     if strip_only:
