@@ -96,7 +96,6 @@ func emitColdhookSharedMetadata(_ specs: [ColdhookSharedSpec]) -> ColdhookShared
     out.replaceSubrange(24..<28, with: Data(fromObject: UInt32(strings.count)))
 
     let slotsOffset = align8(stringsOffset + strings.count)
-    if out.count < slotsOffset { out.append(Data(repeating: 0, count: slotsOffset - out.count)) }
     var slotOffsets: [UInt32] = []
     for (i, spec) in specs.enumerated() {
         var record = Data()
@@ -113,6 +112,7 @@ func emitColdhookSharedMetadata(_ specs: [ColdhookSharedSpec]) -> ColdhookShared
         out.append(record)
     }
     out.append(strings)
+    if out.count < slotsOffset { out.append(Data(repeating: 0, count: slotsOffset - out.count)) }
     out.append(Data(repeating: 0, count: specs.count * 8))
     return ColdhookSharedEmission(data: out, handlerSlotOffsets: slotOffsets,
                                   recordsOffset: UInt32(recordsOffset),
