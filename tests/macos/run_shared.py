@@ -42,7 +42,9 @@ def main():
                 'const char *domain_for(int);\n'
                 'void *coldhook_writable_anchor = (void *)domain_for;\n'
                 '__attribute__((visibility("default"))) const char *domain_for(int n){\n'
-                '  if (getpid() > 0 && n == 0) return "ORIG"; __builtin_trap(); }\n')
+                '  if (getpid() > 0 && n == 0) return "ORIG"; __builtin_trap(); }\n'
+                '__attribute__((visibility("default"))) const char *other_for(int n){\n'
+                '  if (getpid() > 0 && n == 0) return "OTHER-ORIG"; __builtin_trap(); }\n')
     with open(hooks_src, "w") as f:
         f.write('#include "coldhook_shared.h"\n#include "coldhook.h"\n'
                 '#include <stdlib.h>\nextern void *coldhook_shared_orig_lookup(unsigned long long);\n'
@@ -54,7 +56,12 @@ def main():
                 '  if (coldhook_orig_domain_for_hook(n)[0] != \'O\') return "BAD-ORIG";\n'
                 '  return "SHARED-HOOK";\n}\n')
     with open(hooks_src, "a") as f:
-        f.write('CH_DYN_SYM_GATED("libtarget", "domain_for", domain_for_hook);\n')
+        f.write('CH_DYN_SYM_GATED("libtarget", "domain_for", domain_for_hook);\n'
+                'CH_DECLARE_ORIG(other_for_hook, const char *, int);\n'
+                '__attribute__((visibility("default"))) const char *other_for_hook(int n){\n'
+                '  if (coldhook_orig_other_for_hook(n)[0] != \'O\') return "BAD-OTHER-ORIG";\n'
+                '  return "OTHER-HOOK";\n}\n'
+                'CH_DYN_SYM("libtarget", "other_for", other_for_hook);\n')
     with open(driver_src, "w") as f:
         f.write('#include <dlfcn.h>\n#include <stdio.h>\n'
                 'int main(int c,char**v){void*h=dlopen(v[1],RTLD_NOW);'
