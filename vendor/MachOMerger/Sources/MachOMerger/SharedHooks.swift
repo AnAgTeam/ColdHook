@@ -14,6 +14,15 @@ enum ColdhookSharedHookError: Error, CustomStringConvertible {
     }
 }
 
+func coldhookBinarySelectors(path: String) -> Set<String> {
+    let filename = URL(fileURLWithPath: path).lastPathComponent
+    var result: Set<String> = [filename]
+    if let dot = filename.firstIndex(of: "."), dot != filename.startIndex {
+        result.insert(String(filename[..<dot]))
+    }
+    return result
+}
+
 private func signExtend(_ value: UInt32, bits: Int) -> Int64 {
     let shift = 64 - bits
     return Int64(bitPattern: UInt64(value) << shift) >> shift
@@ -44,7 +53,8 @@ private func readBInstruction(_ address: UInt64, from data: MachOMergeData) -> U
 /// In a normal clang-produced dylib the magic symbol is the handler itself (its
 /// first instruction is a prologue, not a branch), so the handler name is derived
 /// directly from the magic symbol rather than decoding code bytes.
-func extractColdhookSharedSpecs(from resolver: ColdhookSymbolResolver, data: MachOMergeData)
+func extractColdhookSharedSpecs(from resolver: ColdhookSymbolResolver, data: MachOMergeData,
+                                targetSelectors: Set<String> = [])
     throws -> [ColdhookSharedSpec] {
     var specs: [ColdhookSharedSpec] = []
     let hooks = resolver.all(prefix: "_COLDHOOK_").filter {
@@ -53,20 +63,40 @@ func extractColdhookSharedSpecs(from resolver: ColdhookSymbolResolver, data: Mac
     for hook in hooks {
         let locator: String
         let handlerName: String
+        let kind: ColdhookHookKind
+        let binarySelector: String?
         if hook.name.hasPrefix("_COLDHOOK_DYN_") {
             let payload = String(hook.name.dropFirst("_COLDHOOK_DYN_".count))
             let parts = payload.components(separatedBy: "__CH__")
             guard parts.count == 3 else { throw ColdhookSharedHookError.invalidBranch(hook.name) }
+            let dynKindAndSelector = parts[0].split(separator: "_", maxSplits: 1).map(String.init)
+            guard dynKindAndSelector.count == 2,
+                  dynKindAndSelector[0] == "SYM" || dynKindAndSelector[0] == "ADDR",
+                  !dynKindAndSelector[1].isEmpty else {
+                throw ColdhookSharedHookError.invalidBranch(hook.name)
+            }
+            kind = dynKindAndSelector[0] == "SYM" ? .symbol : .address
+            binarySelector = dynKindAndSelector[1]
+            guard targetSelectors.isEmpty || targetSelectors.contains(binarySelector!) else {
+                continue
+            }
             locator = parts[1]
             handlerName = parts[2]
         } else if hook.name.hasPrefix("_COLDHOOK_SYM_") {
+            kind = .symbol
+            binarySelector = nil
             locator = String(hook.name.dropFirst("_COLDHOOK_SYM_".count))
             handlerName = locator
         } else {
+            kind = .address
+            binarySelector = nil
             locator = "_COLDHOOK_ADDR_" + String(hook.name.dropFirst("_COLDHOOK_ADDR_".count))
             handlerName = locator
         }
         specs.append(ColdhookSharedSpec(
+            kind: kind,
+            binarySelector: binarySelector,
+            locator: locator,
             hookID: fnv1a(locator),
             handlerName: handlerName,
             origImageOffset: 0,

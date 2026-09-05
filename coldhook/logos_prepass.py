@@ -14,6 +14,8 @@ CH_HOOK_SYM glue). Так logos.pl получает валидный .x уже �
   %hookf(ret, name)                      — by-name, без аргументов
   %hookf(ret, name, T a, U b, ...)       — by-name, с аргументами
   %hookf(ret, 0xADDR, ...)               — by-address (литерал) -> CH_HOOK_ADDR
+  %hookf_shared("Binary", ret, name, ...) — shared by-name -> CH_DYN_SYM
+  %hookf_shared("Binary", ret, 0xADDR, ...) — shared by-address -> CH_DYN_ADDR
   %orig / %orig(args)                     — вызов оригинала
   %group NAME ... %hookf ... %end         — gated-хук (CH_HOOK_SYM_GATED), включается на %init(NAME)
 
@@ -129,7 +131,7 @@ def _translate_orig(body, orig_call, argnames):
     return out
 
 
-def _emit_hookf(ret, target, argdecls, body, gated, group):
+def _emit_hookf(ret, target, argdecls, body, gated, group, shared_binary=None):
     """Сгенерировать C-замену + ColdHook-glue для одного %hookf."""
     argnames = [_param_name(a) for a in argdecls]
     argtypes = [a.rsplit(argnames[k], 1)[0].strip() or a for k, a in enumerate(argdecls)] if argdecls else []
@@ -149,12 +151,20 @@ def _emit_hookf(ret, target, argdecls, body, gated, group):
         out.append(f"CH_DECLARE_GATE({fid});")
     out.append(f"{ret} {fid}({sig}) {tbody}")
     out.append('#ifdef __cplusplus\n}\n#endif')
+    if shared_binary is not None and gated:
+        raise ValueError("%hookf_shared внутри %group пока не поддержан")
     if is_addr:
-        macro = "CH_HOOK_ADDR_GATED" if gated else "CH_HOOK_ADDR"
-        out.append(f"{macro}({target}, {fid});")
+        if shared_binary is not None:
+            out.append(f'CH_DYN_ADDR("{shared_binary}", {target}, {fid});')
+        else:
+            macro = "CH_HOOK_ADDR_GATED" if gated else "CH_HOOK_ADDR"
+            out.append(f"{macro}({target}, {fid});")
     else:
-        macro = "CH_HOOK_SYM_GATED" if gated else "CH_HOOK_SYM"
-        out.append(f'{macro}("{target}", {fid});')
+        if shared_binary is not None:
+            out.append(f'CH_DYN_SYM("{shared_binary}", "{target}", {fid});')
+        else:
+            macro = "CH_HOOK_SYM_GATED" if gated else "CH_HOOK_SYM"
+            out.append(f'{macro}("{target}", {fid});')
     return fid, "\n".join(out)
 
 
@@ -216,9 +226,11 @@ def prepass(text):
                 j += 2 if text[j] == "\\" else 1
             j = min(j + 1, n)
             result.append(text[i:j]); i = j; continue
-        if text.startswith("%hookf", i):
+        shared_hook = text.startswith("%hookf_shared", i)
+        if shared_hook or text.startswith("%hookf", i):
+            directive = "%hookf_shared" if shared_hook else "%hookf"
             # заголовок (...)
-            p = text.index("(", i)
+            p = text.index("(", i + len(directive))
             pend = _scan_block(text, p, "(", ")")
             header = text[p+1:pend-1]
             # тело { ... }
@@ -230,11 +242,19 @@ def prepass(text):
             body = text[b:bend]
 
             parts = _split_top_commas(header)
-            ret, target, argdecls = parts[0], parts[1], parts[2:]
+            if shared_hook:
+                if len(parts) < 3 or not (parts[0].startswith('"') and parts[0].endswith('"')):
+                    raise ValueError("%hookf_shared ожидает (\"Binary\", ret, locator, args...)")
+                binary = parts[0][1:-1]
+                ret, target, argdecls = parts[1], parts[2], parts[3:]
+            else:
+                binary = None
+                ret, target, argdecls = parts[0], parts[1], parts[2:]
             if re.fullmatch(r"[A-Za-z_]\w*", target.strip()):
                 hookf_names.add(target.strip())
             grp = group_at(i)
-            fid, c = _emit_hookf(ret, target, argdecls, body, gated=bool(grp), group=grp)
+            fid, c = _emit_hookf(ret, target, argdecls, body, gated=bool(grp), group=grp,
+                                 shared_binary=binary)
             if grp:
                 gated_hooks.append((grp, fid))
             # вставляем include один раз

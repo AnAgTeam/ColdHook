@@ -2,7 +2,15 @@
 import Foundation
 import SwiftMachO
 
+enum ColdhookHookKind: Equatable {
+    case symbol
+    case address
+}
+
 struct ColdhookSharedSpec {
+    let kind: ColdhookHookKind
+    let binarySelector: String?
+    let locator: String
     let hookID: UInt64
     let handlerName: String
     let origImageOffset: UInt64

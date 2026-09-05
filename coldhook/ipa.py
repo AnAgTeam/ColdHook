@@ -77,3 +77,50 @@ def patch_bundle(inp: str, config: Config, out: str, do_sign: bool = False) -> s
 
     print(f"{C_GREEN}OK бандл пропатчен -> {out}{C_RST}")
     return out
+
+
+def patch_shared_bundle(inp: str, dylib: str, out: str, do_sign: bool = False) -> str:
+    """Apply one shared hook dylib to every Mach-O in an app bundle.
+
+    File discovery is deliberately dumb: every regular file is probed, and the
+    merger decides whether the current image has applicable declarations.
+    """
+    build.toolchain.ensure_merger()
+    if not os.path.exists(dylib):
+        raise PatchError(f"shared hook-dylib не найден: {dylib}")
+    work = tempfile.mkdtemp(prefix="coldhook_shared_bundle_")
+    try:
+        if not inp.endswith(".app") or not os.path.isdir(inp):
+            raise PatchError("shared: ожидается каталог .app")
+        stage = os.path.join(work, os.path.basename(inp))
+        shutil.copytree(inp, stage, symlinks=True)
+        dylib_real = os.path.realpath(dylib)
+        patched = 0
+        for root, _, files in os.walk(stage):
+            for name in files:
+                target = os.path.join(root, name)
+                if os.path.realpath(target) == dylib_real:
+                    continue
+                try:
+                    build.macho.inspect(target)
+                except Exception:
+                    continue
+                merged = target + ".coldhook"
+                try:
+                    build.toolchain.merge(target, dylib, merged, mode="shared")
+                except Exception:
+                    if os.path.exists(merged):
+                        os.remove(merged)
+                    raise
+                shutil.copymode(target, merged)
+                shutil.move(merged, target)
+                if do_sign:
+                    build.toolchain.sign(target)
+                patched += 1
+        if os.path.exists(out):
+            shutil.rmtree(out)
+        shutil.copytree(stage, out, symlinks=True)
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+    print(f"{C_GREEN}OK shared bundle: обработано Mach-O: {patched}{C_RST}")
+    return out

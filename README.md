@@ -165,10 +165,15 @@ python3 -m coldhook info   <binary>
 python3 -m coldhook merge  --target <binary> --src hook.c --src orig_stubs.S --out <out>
 python3 -m coldhook patch  -c coldhook.toml                    # пачкой, отдельные бинари
 python3 -m coldhook ipa    <in.ipa|.app> -c cfg -o <out>       # merge в бандл in-place
+python3 -m coldhook shared <in.app> --dylib hooks.dylib -o <out.app> # один shared dylib на все Mach-O
 ```
 
 Конфиг (`coldhook.toml`) — список `[[target]]` (binary → sources|dylib) + `[signing]`.
 Проверяет арку/платформу/cryptid; FAT — патчит arm64/arm64e-слайсы, остальные оставляет.
+
+`shared` не читает конфиг: он проходит все Mach-O в `.app` и передаёт один dylib в
+`MachOMerger --mode shared`. `CH_DYN_SYM`/`CH_DYN_ADDR` внутри dylib содержат selector
+бинаря, поэтому решение «hook или no-op» остаётся за merger.
 
 Импорты хука B: новые символы из dylib, которые таргет **уже линкует**, дозаписываются
 автоматически. Если хуку нужен dylib, которого в таргете НЕТ — по умолчанию ошибка;

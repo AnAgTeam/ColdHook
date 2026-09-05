@@ -13,8 +13,10 @@ TEMPLATES_DIR = os.path.join(HERE, "templates")
 
 # (каталог шаблона, отображаемое имя в nic.pl)
 TEMPLATES = [
-    ("coldhook-tweak", "ColdHook Tweak"),
-    ("coldhook-swift-tweak", "ColdHook Swift Tweak"),
+    # Public template: shared is the default user-facing workflow.  The older
+    # embedded templates remain in-tree for compatibility/tests but are not
+    # advertised by NIC installation.
+    ("coldhook-shared", "ColdHook Shared Tweak"),
 ]
 
 
@@ -60,5 +62,5 @@ def cmd_install_theos(args) -> int:
     print("Шаблоны установлены:")
     for d in dests:
         print(f"  {d}")
-    print("Теперь: nic.pl  ->  «ColdHook Tweak» (Logos) или «ColdHook Swift Tweak»  ->  make")
+    print("Теперь: nic.pl  ->  «ColdHook Shared Tweak»  ->  make")
     return 0
