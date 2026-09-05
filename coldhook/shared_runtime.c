@@ -11,6 +11,7 @@
 #include <mach-o/getsect.h>
 #include <mach-o/loader.h>
 #include <pthread.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -65,7 +66,7 @@ static void process_image(const struct mach_header *header, intptr_t slide) {
 
     unsigned long section_size = 0;
     uint8_t *table_bytes = (uint8_t *)getsectiondata((const struct mach_header_64 *)header,
-                                                      "__DATA", "__coldhook", &section_size);
+                                                      "__COLDHOOK_DATA", "__coldhook", &section_size);
     if (!table_bytes || section_size < sizeof(struct coldhook_shared_table)) return;
 
     const struct coldhook_shared_table *table = (const struct coldhook_shared_table *)table_bytes;
@@ -91,7 +92,10 @@ static void process_image(const struct mach_header *header, intptr_t slide) {
         memcpy(name, strings + record->handler_name_offset, record->handler_name_size);
         name[record->handler_name_size] = '\0';
         void *handler = dlsym(RTLD_DEFAULT, name);
-        if (!handler) continue;
+        if (!handler) {
+            fprintf(stderr, "coldhook: required handler '%s' was not found\n", name);
+            abort();
+        }
 
         void **slot = (void **)(table_bytes + record->handler_slot_offset);
         __atomic_store_n(slot, handler, __ATOMIC_RELEASE);
