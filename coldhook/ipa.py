@@ -17,6 +17,24 @@ from .build import C_CYAN, C_GREEN, C_RST, PatchError
 from .config import Config
 
 
+def _shared_hook_descriptions(dylib: str) -> list[str]:
+    """Read linker metadata names without requiring a Mach-O parser here."""
+    try:
+        p = subprocess.run(["nm", "-a", dylib], capture_output=True, text=True)
+    except OSError:
+        return []
+    result = []
+    marker = "_COLDHOOK_DYN_SYM_"
+    for line in p.stdout.splitlines():
+        if marker not in line:
+            continue
+        name = line[line.index(marker) + len(marker):].split()[0]
+        fields = name.split("__CH__")
+        if len(fields) >= 3:
+            result.append(f"{fields[0]}:{fields[1]}")
+    return list(dict.fromkeys(result))
+
+
 def _run(cmd: list[str], what: str, cwd: str | None = None) -> None:
     p = subprocess.run(cmd, capture_output=True, text=True, cwd=cwd)
     if p.returncode != 0:
@@ -52,6 +70,10 @@ def patch_bundle(inp: str, config: Config, out: str, do_sign: bool = False) -> s
             stage = dst
 
         app = _find_app(stage)
+        hook_descriptions = _shared_hook_descriptions(dylib) if verbose else []
+        if verbose:
+            for description in hook_descriptions:
+                print(f"will add {description}")
         print(f"{C_CYAN}== .app: {os.path.relpath(app, work)}{C_RST}")
 
         for t in config.targets:
@@ -134,6 +156,7 @@ def patch_shared_bundle(inp: str, dylib: str, out: str, do_sign: bool = False,
                 except Exception:
                     continue
                 merged = target + ".coldhook"
+                before = open(target, "rb").read() if verbose else None
                 try:
                     build.toolchain.merge(target, dylib, merged, mode="shared", import_path=import_path)
                 except Exception:
@@ -146,7 +169,9 @@ def patch_shared_bundle(inp: str, dylib: str, out: str, do_sign: bool = False,
                     build.toolchain.sign(target)
                 patched += 1
                 if verbose:
-                    print(f"will add {os.path.relpath(target, app)}")
+                    after = open(target, "rb").read()
+                    rel = os.path.relpath(target, app)
+                    print(f"no-op binary {rel}" if before == after else f"added hooks to {rel}")
         if is_ipa:
             print(f"{C_CYAN}== запаковка IPA: {os.path.basename(out)}{C_RST}")
             out_abs = os.path.abspath(out)
