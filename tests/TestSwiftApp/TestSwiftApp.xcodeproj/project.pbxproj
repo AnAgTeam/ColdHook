@@ -239,7 +239,7 @@
 			files = (
 			);
 			inputPaths = (
-				"${SRCROOT}/TestSwiftApp/TestFramework.c",
+				"${SRCROOT}/TestSwiftApp/TestFramework.swift",
 			);
 			name = "Embed TestFramework";
 			outputPaths = (
@@ -247,7 +247,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "set -e\nmkdir -p ${BUILT_PRODUCTS_DIR}/TestSwiftApp.app/Frameworks/TestFramework.framework\nxcrun clang -arch arm64 -isysroot ${SDKROOT} -dynamiclib -Wl,-headerpad_max_install_names -install_name @rpath/TestFramework.framework/TestFramework ${SRCROOT}/TestSwiftApp/TestFramework.c -o ${BUILT_PRODUCTS_DIR}/TestSwiftApp.app/Frameworks/TestFramework.framework/TestFramework\n";
+			shellScript = "set -e\nmkdir -p ${BUILT_PRODUCTS_DIR}/TestSwiftApp.app/Frameworks/TestFramework.framework\nxcrun swiftc -target arm64-apple-ios${IPHONEOS_DEPLOYMENT_TARGET} -sdk ${SDKROOT} -parse-as-library -emit-library -module-name TestFramework -Xlinker -headerpad_max_install_names -Xlinker -install_name -Xlinker @rpath/TestFramework.framework/TestFramework ${SRCROOT}/TestSwiftApp/TestFramework.swift -o ${BUILT_PRODUCTS_DIR}/TestSwiftApp.app/Frameworks/TestFramework.framework/TestFramework\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 
