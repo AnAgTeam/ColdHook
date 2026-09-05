@@ -182,7 +182,7 @@ func planColdhookSharedTarget(
         let magic = hookSymbols[index]
         let locator: String
         if magic.name.hasPrefix("_COLDHOOK_DYN_") {
-            let fields = String(magic.name.dropFirst("_COLDHOOK_DYN_".count)).components(separatedBy: "__")
+            let fields = String(magic.name.dropFirst("_COLDHOOK_DYN_".count)).components(separatedBy: "__CH__")
             guard fields.count == 3 else {
                 throw ColdhookSharedAssemblerError.targetNotFound("invalid dynamic declaration \(magic.name)")
             }

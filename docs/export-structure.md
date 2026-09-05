@@ -55,27 +55,27 @@ _COLDHOOK_TRAMPOLINE_ADDR_0x1234
 Рекомендуемая грамматика:
 
 ```text
-_COLDHOOK_DYN_SYM_<binary-selector>__<locator>__<handler>
-_COLDHOOK_DYN_ADDR_<binary-selector>__<locator>__<handler>
+_COLDHOOK_DYN_SYM_<binary-selector>__CH__<locator>__CH__<handler>
+_COLDHOOK_DYN_ADDR_<binary-selector>__CH__<locator>__CH__<handler>
 ```
 
 Примеры:
 
 ```text
-_COLDHOOK_DYN_SYM_Foo__domain_for__domain_fix
-_COLDHOOK_DYN_ADDR_Foo__COLDHOOK_ADDR_0x1234__fix
+_COLDHOOK_DYN_SYM_Foo__CH__domain_for__CH__domain_fix
+_COLDHOOK_DYN_ADDR_Foo__CH__COLDHOOK_ADDR_0x1234__CH__fix
 ```
 
 Внутри merger имя разбирается только в одном месте:
 
 ```text
 prefix = _COLDHOOK_DYN_<kind>_
-binary-selector __ locator __ handler
+binary-selector __CH__ locator __CH__ handler
 ```
 
 `binary-selector` сравнивается с identity текущего Mach-O, `locator` разрешается
 через общий symbol resolver или как `COLDHOOK_ADDR_*`, а `handler` записывается в
-shared-таблицу как имя, передаваемое runtime в `dlsym`. Последовательность `__` в этих полях
+shared-таблицу как имя, передаваемое runtime в `dlsym`. Последовательность `__CH__` в этих полях
 должны быть запрещены или экранироваться на этапе генерации.
 
 Это служебные export-like magic-символы hook-dylib. Они не являются экспортами
