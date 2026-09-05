@@ -18,6 +18,7 @@ let package = Package(
             .product(name: "SwiftCompilerPlugin", package: "swift-syntax"),
             .product(name: "SwiftDiagnostics", package: "swift-syntax"),
         ]),
-        .target(name: "ColdHookMacroDeclarations"),
+        .target(name: "ColdHookMacroDeclarations", dependencies: ["ColdHookMacros"]),
+        .executableTarget(name: "ColdHookMacroSmoke", dependencies: ["ColdHookMacroDeclarations"]),
     ]
 )
