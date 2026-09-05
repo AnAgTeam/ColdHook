@@ -1,12 +1,13 @@
 # ColdHook Shared Mode — архитектура и актуальные задачи
 
 Цель: одна хук-либа на **несколько бинарей** процесса (main + фреймворки), загружается как
-обычный dylib — сегменты НЕ переименовываются. Это разблокирует ObjC `%hook` (рантайм уникует
-selrefs из нормального `__DATA`) и позволяет держать тело хука один раз, а не дублировать в
-каждый таргет.
+обычный dylib. Существующие сегменты target не переименовываются; для metadata/stub добавляются
+синтетические `__COLDHOOK_TEXT` и `__COLDHOOK_DATA`. Это позволяет держать тело хука один раз,
+а не дублировать в каждый таргет.
 
 Реализовано: shared table/bootstrap, selector filtering, append-стратегия, `%hookf_shared`,
-shared gated-группы, ORIG slots, Logos/NIC-шаблоны и runtime linker stub.
+shared gated-группы, ORIG slots, Logos/NIC-шаблоны и runtime linker stub. Обычный ObjC `%hook`
+обслуживается Logos/Substrate shim в embedded-шаблоне, а не shared backend.
 
 ## Следующие этапы
 
@@ -16,12 +17,12 @@ shared gated-группы, ORIG slots, Logos/NIC-шаблоны и runtime linke
 
 ## Embedded vs Shared
 
-| | embedded (сейчас) | shared (будущее) |
+| | embedded | shared (реализовано) |
 |---|---|---|
 | хук-код | смёрджен В таргет, сегменты → `__BTEXT/__BDATA` | ОДИН раз в обычном dylib, сегменты нормальные |
-| загрузка | вместе с таргетом (он же и есть) | отдельный `LC_LOAD_DYLIB` в главный бинарь |
+| загрузка | вместе с таргетом (он же и есть) | отдельный `LC_LOAD_DYLIB` в каждый обработанный image |
 | привязка | merge-time, один образ | два образа, слайдятся **раздельно** (ASLR) |
-| ObjC `%hook` | сломан (selrefs из `__BDATA` не уникуются) | **работает** (нормальный `__DATA`) |
+| ObjC `%hook` | работает через Logos/Substrate shim | не является функцией shared backend |
 | гейты/группы | работают | даже чище (нормальный writable `__DATA` + конструктор dylib) |
 
 Главное следствие: target и hook-lib двигаются независимо. Отсюда две трудности — обе решаются
@@ -33,9 +34,9 @@ shared gated-группы, ORIG slots, Logos/NIC-шаблоны и runtime linke
 bootstrap-код во всех версиях `libcoldhook.dylib`. MachOMerger при патчинге target синтезирует
 только stub-код и metadata; bootstrap не перекомпилируется при добавлении или удалении хуков.
 
-В target добавляется writable-секция `__DATA,__coldhook` и неизменяемая строковая таблица
-(`__TEXT,__coldhook_names` или `__DATA_CONST,__coldhook_names`). Формат секции должен быть
-самоописываемым и версионируемым:
+В target добавляются синтетические сегменты `__COLDHOOK_TEXT,__coldhook_stub` и
+`__COLDHOOK_DATA,__coldhook`. Таблица, slots и строки metadata находятся в одной writable
+секции `__COLDHOOK_DATA,__coldhook`. Формат секции самоописываемый и версионируемый:
 
 ```c
 struct ColdHookTable {
@@ -90,10 +91,10 @@ shared handler → orig_slot → target orig trampoline
 ```
 
 Имена должны иметь уникальный префикс (`_coldhook_handler$...`), чтобы исключить случайное
-разрешение символа из другого образа. Для handler-ов, которые не найдены, bootstrap оставляет
-слот нулевым и выдаёт диагностическое сообщение; target не должен запускать такой stub.
+разрешение символа из другого образа. Если handler, ORIG slot или gated dispatch не найден,
+bootstrap пишет диагностику и завершает процесс через `abort()` (fail-fast).
 
-Одна `__DATA`-секция для таблицы и отдельная read-only string table проще, чем синтезировать
+Одна custom data-секция для таблицы и строк проще, чем синтезировать
 импорт и chained-fixup bind для каждого handler. Native dyld-bind остаётся альтернативным,
 более быстрым режимом, если в target достаточно места и его metadata можно безопасно расширить.
 
@@ -122,12 +123,12 @@ Shared backend не должен переделывать существующи
 
 | Компонент | Ответственность shared backend |
 |---|---|
-| `vendor/MachOMerger/.../main.swift` | новый режим входа: оставить hook dylib отдельным, принять manifest и эмитить target metadata/stubs |
-| `SegmentLoadCommand.swift` | описать `__TEXT,__coldhook_stub` и `__DATA,__coldhook` в load commands либо переиспользовать append-хвост существующих сегментов |
+| `vendor/MachOMerger/.../main.swift` | shared-режим оставляет hook dylib отдельным и эмитит target metadata/stubs |
+| `SharedHooks.swift` / `SharedAssembler.swift` | разобрать `CH_DYN_*`, выбрать записи и собрать metadata/stubs |
 | `RelocInfo.swift` / `SegmentSplitInfo.swift` | дать адресные преобразования для orig/stub и проверить дальность локального `B` |
 | `coldhook/include/coldhook_shared.h` | общий ABI таблицы, уже зафиксированный для патчера и bootstrap |
-| `coldhook/build.py` | собрать shared dylib один раз, передать manifest на каждый target и добавить dylib в bundle |
-| `coldhook/ipa.py` / `macho.py` | найти main/framework targets, установить один shared dylib и переподписать все изменённые образы |
+| `coldhook/build.py` | собрать shared dylib один раз и передать его каждому target |
+| `coldhook/ipa.py` | найти main/framework images, установить dylib/runtime и при `--sign-bundle` подписать обработанные target images |
 | runtime bootstrap | перечислить dyld images, прочитать metadata, разрешить handler names и заполнить registry/slots |
 
 Текущие `MagicSymbols.swift` и `mergeChainedFixups` рассчитаны на merge двух образов и не должны
@@ -170,17 +171,18 @@ Per каждый именованный бинарь:
 ```
 1. дописать stub-регион + orig-трамплин (см. выше)
 2. пропатчить вход хукнутых функций -> b <appended_stub>
-3. главный бинарь += LC_LOAD_DYLIB на shared-lib   (так dyld грузит её на старте, без DYLD_INSERT)
+3. каждый обработанный target image получает `LC_LOAD_DYLIB` на shared-lib (так dyld грузит её
+   на старте, без `DYLD_INSERT`)
 4. выбрать способ связки handler-ов:
-   - **native-bind:** синтезировать на target import `_ch_hook_<h>` (GOT-слот + chained-fixup bind)
-     и export `_coldhook_orig_<bin>_<h>`;
-   - **bootstrap-table:** синтезировать `__DATA,__coldhook` + string table, без import-а на каждый
-     handler; универсальный constructor shared-lib заполнит слоты через `dlsym`.
-5. переподписать каждый тронутый бинарь + shared-lib
+   - **bootstrap-table (текущая реализация):** синтезировать `__COLDHOOK_TEXT` и
+     `__COLDHOOK_DATA,__coldhook`; универсальный constructor shared-lib заполнит слоты через
+     `dlsym`.
+5. переподписать каждый тронутый бинарь и добавленные dylib (вручную либо отдельным bundler-ом)
 ```
 
-Двусторонний бинд: **target импортирует hook**, **shared импортирует orig**. Имена детерминированы
-из `handle`+`binary` → обе стороны совпадают без ручной синхронизации.
+В текущем bootstrap-table target не синтезирует отдельный import для каждого handler-а: runtime
+разрешает имя через `dlsym` и заполняет локальный slot. ORIG передаётся через target-слайд и
+экспортируемые runtime slots.
 
 ## Синтаксис: декларация ↔ тело
 
@@ -233,19 +235,20 @@ CH_DYN_SYM("SomeFramework", "_internalFn", target4);
 | save+reencode первой инструкции входа (ORIG) | два прыжка: `b stub` + appended `adrp/ldr/br` через import-GOT |
 | import-binding B (Step 2 / 2c, `--allow-new-dylibs`) | синтез import `_ch_hook_<h>` на ТАРГЕТЕ (не B-в-A, а патч готового бинаря) |
 | gated-thunk, конструкторы хука/таргета | orig-трамплин-регион, ЭКСПОРТируемый таргетом (nlist + bind) |
-| FAT-слайсинг, resign (`coldhook/ipa.py`, `macho.py`) | manifest «имя бинаря → путь в .app/.ipa»; resign НЕСКОЛЬКИХ бинарей |
+| FAT-слайсинг, resign (`coldhook/ipa.py`, `macho.py`) | shared bundle обрабатывает thin images; FAT-слайсинг выполняется обычным `merge`/`patch` |
 | препасс `%hookf` → статика | бэкенд-свитч embedded/shared в препассе + `CH_DYN_*` декларации |
 
 ## Открытые вопросы
 
-- **Манифест** имя→путь — единственная принципиально новая сущность для `CH_DYN_*`. Маленький
-  toml или аргумент инсталлера; имя сверять с `install_name`/именем файла образа в процессе.
+- **Selector** имя→image проверяется оркестратором; при неоднозначности требуется
+  bundle-relative или абсолютный selector.
 - **`b stub` ≥ 4 байта** на входе: у крошечных leaf-функций может не хватить места под даже одну
   инструкцию-замену с сохранением (как и в embedded, но тут чаще). Нужна проверка длины + ошибка.
 - **Подпись** — тронутых бинарей теперь несколько (main + каждый хукнутый фреймворк + shared-lib);
-  surface шире embedded, all-или-ничего по entitlements.
-- **Двусторонний бинд и порядок загрузки** — orig-трамплин экспортит target, hook экспортит
-  shared-lib; dyld резолвит оба на старте. Проверить, что нет цикла, ломающего ранний `%ctor`.
+  surface шире embedded, all-или-ничего по entitlements. Оркестратор копирует dylib/runtime,
+  а подпись добавленных dylib выполняется отдельным шагом.
+- **Порядок загрузки** — runtime регистрирует callback dyld и обрабатывает уже загруженные и
+  поздно добавленные images; отсутствие обязательной записи приводит к fail-fast `abort()`.
 - **arm64e/PAC** — указатель в GOT-слоте может требовать auth-биндинга; `br x16` без auth ок, но
   слот биндим как обычный/auth по формату цепочки таргета.
 - **Где живёт shared-lib в .app** — путь установки + корректный `install_name`/rpath, чтобы
@@ -253,10 +256,11 @@ CH_DYN_SYM("SomeFramework", "_internalFn", target4);
 
 ## Связанные сущности (уже в репо)
 
-- `coldhook/include/coldhook.h` — `CH_HOOK_ADDR`/`CH_HOOK_SYM`, gated-макросы; сюда лягут `CH_DYN_*`.
-- `vendor/MachOMerger` — import-binding (Step 2/2c), save+reencode входа — кирпичи shared.
-- `coldhook/ipa.py`, `coldhook/macho.py` — слайсинг/resign; расширить на несколько бинарей.
-- `coldhook/logos_prepass.py` — препасс `%hookf`; добавить бэкенд-свитч + `CH_DYN_*`.
+- `coldhook/include/coldhook.h` — `CH_HOOK_ADDR`/`CH_HOOK_SYM`, gated-макросы и реализованные `CH_DYN_*`.
+- `vendor/MachOMerger` — shared table/stub assembly и save+reencode входа.
+- `coldhook/ipa.py` — обход main/framework images, установка dylib/runtime; `macho.py` отвечает
+  за introspection и FAT-слайсинг обычного merge-пути.
+- `coldhook/logos_prepass.py` — препасс `%hookf` и `%hookf_shared`, генерирующий `CH_DYN_*`.
 - Соседи по плану — `docs/swift-dsl.md`, `docs/sig-prescan.md`, `[[coldhook-direction-symbols-merge]]`.
-- Память: shared разблокирует ObjC `%hook` «бесплатно» — см. `[[logos-integration-coldhook]]`,
+- ObjC `%hook` остаётся ответственностью Logos/Substrate shim embedded-шаблона — см. `[[logos-integration-coldhook]]`,
   `[[append-mode-no-splitinfo]]`.

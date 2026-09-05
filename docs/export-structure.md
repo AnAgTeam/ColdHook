@@ -50,9 +50,8 @@ _COLDHOOK_TRAMPOLINE_ADDR_0x1234
 
 ### Именованные shared-декларации
 
-Для будущих `CH_DYN_SYM("Foo", "domain_for", domain_fix)` и
-`CH_DYN_ADDR("Foo", 0x1234, fix)` нужен отдельный self-describing namespace.
-Рекомендуемая грамматика:
+Для реализованных `CH_DYN_SYM("Foo", "domain_for", domain_fix)` и
+`CH_DYN_ADDR("Foo", 0x1234, fix)` используется self-describing namespace:
 
 ```text
 _COLDHOOK_DYN_SYM_<binary-selector>__CH__<locator>__CH__<handler>
@@ -66,7 +65,7 @@ _COLDHOOK_DYN_SYM_Foo__CH__domain_for__CH__domain_fix
 _COLDHOOK_DYN_ADDR_Foo__CH__COLDHOOK_ADDR_0x1234__CH__fix
 ```
 
-Внутри merger имя разбирается только в одном месте:
+Внутри merger имя разбирается в `SharedHooks.swift`:
 
 ```text
 prefix = _COLDHOOK_DYN_<kind>_
@@ -100,9 +99,7 @@ target-бинаря: target export разрешается отдельно, а r
 
 ## Что поддерживает текущий merger
 
-Сейчас общая часть разрешения использует raw `LC_SYMTAB` и фильтрует STABS и
+Общая часть разрешения использует raw `LC_SYMTAB` и фильтрует STABS и
 undefined-записи. `LC_DYLD_EXPORTS_TRIE` сохраняется/пересобирается в output, но
-отдельный trie-resolver для выбора hook target ещё не выделен.
-
-Поэтому `CH_DYN_*` должны добавляться в `SymbolResolver.swift`/общую модель
-деклараций, а не через отдельный повторный парсер экспортов в shared backend.
+отдельного trie-resolver для выбора hook target нет. Shared-декларации уже разбираются
+в `SharedHooks.swift`, после чего target locator разрешается общим symtab-resolver-ом.
