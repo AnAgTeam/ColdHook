@@ -6,7 +6,8 @@ import subprocess
 
 # Корень репозитория = на два уровня выше этого файла (coldhook/ -> repo).
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-MERGER = os.path.join(ROOT, "vendor", "MachOMerger", ".build", "release", "MachOMerger")
+_merger_name = "MachOMerger.exe" if os.name == "nt" else "MachOMerger"
+MERGER = os.path.join(ROOT, "vendor", "MachOMerger", ".build", "release", _merger_name)
 
 # Флаги, обязательные для сливаемых бинарей (см. харнесс/память):
 #  -fixup_chains       — мёрджер умеет только LC_DYLD_CHAINED_FIXUPS;
@@ -27,6 +28,13 @@ def _run(cmd: list[str], what: str) -> None:
 
 
 def ensure_merger() -> str:
+    # A release can ship MachOMerger(.exe) next to the Python package.
+    candidates = [MERGER,
+                  os.path.join(ROOT, "bin", _merger_name),
+                  os.path.join(os.path.dirname(__file__), _merger_name)]
+    for candidate in candidates:
+        if os.path.isfile(candidate) and (os.name == "nt" or os.access(candidate, os.X_OK)):
+            return candidate
     if not os.access(MERGER, os.X_OK):
         raise ToolError(
             f"MachOMerger не собран: {MERGER}\n"

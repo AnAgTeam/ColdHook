@@ -12,6 +12,7 @@ import pathlib
 import shutil
 import subprocess
 import tempfile
+import zipfile
 
 from . import build
 from .build import C_CYAN, C_GREEN, C_RST, PatchError
@@ -91,6 +92,26 @@ def _run(cmd: list[str], what: str, cwd: str | None = None) -> None:
         raise PatchError(f"{what} упало: {p.stderr.strip() or p.stdout.strip()}")
 
 
+def _unpack_ipa(path: str, destination: str) -> None:
+    try:
+        with zipfile.ZipFile(path) as archive:
+            archive.extractall(destination)
+    except (OSError, zipfile.BadZipFile) as exc:
+        raise PatchError(f"unzip упало: {exc}") from exc
+
+
+def _pack_ipa(stage: str, output: str) -> None:
+    try:
+        with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+            payload = os.path.join(stage, "Payload")
+            for root, _, files in os.walk(payload):
+                for name in files:
+                    path = os.path.join(root, name)
+                    archive.write(path, os.path.relpath(path, stage))
+    except OSError as exc:
+        raise PatchError(f"zip упало: {exc}") from exc
+
+
 def _find_app(root: str) -> str:
     """Найти .app: для IPA — Payload/*.app; если root сам .app — он и есть."""
     if root.endswith(".app") and os.path.isdir(root):
@@ -110,7 +131,7 @@ def patch_bundle(inp: str, config: Config, out: str, do_sign: bool = False) -> s
     try:
         if is_ipa:
             print(f"{C_CYAN}== распаковка IPA: {os.path.basename(inp)}{C_RST}")
-            _run(["unzip", "-q", "-o", inp, "-d", work], "unzip")
+            _unpack_ipa(inp, work)
             stage = work
         else:
             # .app-каталог: работаем на копии, чтобы не трогать оригинал
@@ -134,7 +155,7 @@ def patch_bundle(inp: str, config: Config, out: str, do_sign: bool = False) -> s
             if os.path.exists(out_abs):
                 os.remove(out_abs)
             # zip из каталога staging, сохраняя Payload/ и права/симлинки
-            _run(["zip", "-qry", out_abs, "Payload"], "zip", cwd=stage)
+            _pack_ipa(stage, out_abs)
         else:
             print(f"{C_CYAN}== вывод .app -> {out}{C_RST}")
             if os.path.exists(out):
@@ -169,7 +190,7 @@ def patch_shared_bundle(inp: str, dylib: str, out: str, do_sign: bool = False,
     try:
         if is_ipa:
             print(f"{C_CYAN}== распаковка IPA: {os.path.basename(inp)}{C_RST}")
-            _run(["unzip", "-q", "-o", inp, "-d", work], "unzip")
+            _unpack_ipa(inp, work)
             stage = work
         else:
             if not inp.endswith(".app") or not os.path.isdir(inp):
@@ -250,7 +271,7 @@ def patch_shared_bundle(inp: str, dylib: str, out: str, do_sign: bool = False,
             out_abs = os.path.abspath(out)
             if os.path.exists(out_abs):
                 os.remove(out_abs)
-            _run(["zip", "-qry", out_abs, "Payload"], "zip", cwd=stage)
+            _pack_ipa(stage, out_abs)
         else:
             if os.path.exists(out):
                 shutil.rmtree(out)
