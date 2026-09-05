@@ -806,7 +806,12 @@ func coldhookMergeInitOffsets() {
     coldhookInitMerge = ColdhookInitMerge(combinedVMAddr: bTextVM, combinedSize: UInt64(combined.count))
     print("ColdHook: слил __init_offsets A+B (\(aInit.size + bInit.size) б) в мёртвую область B @ \(String(format: "0x%llx", bTextVM))")
 }
-coldhookMergeInitOffsets()
+// __init_offsets merging belongs to append/interleave assembly. Shared mode
+// emits its own metadata segments and must not reuse append's VM-address
+// relocation (it can underflow when target and hook use different bases).
+if coldhookModeArg != "shared" {
+    coldhookMergeInitOffsets()
+}
 
 // ColdHook: APPEND-сборка. Таргет A остаётся на месте (vmaddr/fileoff/фиксапы/entry как есть),
 // сегменты хука B аппендятся после контента A, новый заголовок переписываем В ПРЕДЕЛАХ padding A
