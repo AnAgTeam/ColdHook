@@ -40,27 +40,19 @@ private func readBInstruction(_ address: UInt64, from data: MachOMergeData) -> U
 }
 
 /// Reads the same `_MACHOMERGER_HOOK_*` declarations consumed by embedded mode.
-/// The handler name is recovered by decoding the declaration's `b _handler`
-/// instruction, so no second manifest is required.
+/// In a normal clang-produced dylib the magic symbol is the handler itself (its
+/// first instruction is a prologue, not a branch), so the handler name is derived
+/// directly from the magic symbol rather than decoding code bytes.
 func extractColdhookSharedSpecs(from resolver: ColdhookSymbolResolver, data: MachOMergeData)
     throws -> [ColdhookSharedSpec] {
     var specs: [ColdhookSharedSpec] = []
     let hooks = resolver.all(prefix: "_MACHOMERGER_HOOK_")
     for hook in hooks {
-        guard let instruction = readBInstruction(hook.value, from: data),
-              instruction & 0xfc000000 == 0x14000000 else {
-            throw ColdhookSharedHookError.invalidBranch(hook.name)
-        }
-        let target = UInt64(Int64(bitPattern: hook.value) +
-                            signExtend(instruction & 0x03ffffff, bits: 26) * 4)
-        guard let handler = resolver.symbols.first(where: { $0.value == target &&
-                                                    ($0.type & 0x0e) == 0x0e }) else {
-            throw ColdhookSharedHookError.handlerNotFound(hook.name)
-        }
         let locator = String(hook.name.dropFirst("_MACHOMERGER_HOOK_".count))
+        let handlerName = String(hook.name.dropFirst())
         specs.append(ColdhookSharedSpec(
             hookID: fnv1a(locator),
-            handlerName: handler.name,
+            handlerName: handlerName,
             origImageOffset: 0,
             origSlotKey: UInt32(truncatingIfNeeded: fnv1a(locator)),
             flags: 0
