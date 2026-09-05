@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """End-to-end smoke test for MachOMerger's shared-table backend."""
 import os
+import shutil
 import subprocess
 import sys
 
@@ -27,6 +28,8 @@ def main():
         os.remove(os.path.join(BUILD, name))
 
     target = os.path.join(BUILD, "libtarget.dylib")
+    other_target = os.path.join(BUILD, "libother.dylib")
+    other_merged = os.path.join(BUILD, "libother.shared.dylib")
     hooks = os.path.join(BUILD, "libhooks.dylib")
     merged = os.path.join(BUILD, "libtarget.shared.dylib")
     driver = os.path.join(BUILD, "driver")
@@ -43,11 +46,13 @@ def main():
     with open(hooks_src, "w") as f:
         f.write('#include "coldhook_shared.h"\n#include "coldhook.h"\n'
                 'extern void *coldhook_shared_orig_lookup(unsigned long long);\n'
+                'CH_DECLARE_ORIG(domain_for_hook, const char *, int);\n'
                 '__attribute__((constructor)) static void boot(void){ (void)coldhook_shared_orig_lookup; }\n'
                 '__attribute__((visibility("default"))) const char *domain_for_hook(int n){\n'
-                '  (void)n; return "SHARED-HOOK";\n}\n')
+                '  if (coldhook_orig_domain_for_hook(n)[0] != \'O\') return "BAD-ORIG";\n'
+                '  return "SHARED-HOOK";\n}\n')
     with open(hooks_src, "a") as f:
-        f.write('CH_DYN_SYM("MainBinary", "domain_for", domain_for_hook);\n')
+        f.write('CH_DYN_SYM("libtarget", "domain_for", domain_for_hook);\n')
     with open(driver_src, "w") as f:
         f.write('#include <dlfcn.h>\n#include <stdio.h>\n'
                 'int main(int c,char**v){void*h=dlopen(v[1],RTLD_NOW);'
@@ -69,6 +74,16 @@ def main():
     sys.stdout.write(result.stdout); sys.stderr.write(result.stderr)
     if result.returncode:
         raise RuntimeError("shared merge failed")
+    # The very same dylib is deliberately offered to another Mach-O.  Its
+    # CH_DYN selector is libtarget, so MachOMerger must leave libother untouched.
+    shutil.copyfile(target, other_target)
+    result = run([MERGER, other_target, hooks, other_merged, "--mode", "shared"],
+                 capture_output=True, text=True)
+    sys.stdout.write(result.stdout); sys.stderr.write(result.stderr)
+    if result.returncode or "no applicable hooks" not in result.stdout:
+        raise RuntimeError("shared selector no-op failed")
+    if open(other_target, "rb").read() != open(other_merged, "rb").read():
+        raise RuntimeError("shared no-op changed target bytes")
     check(["codesign", "-f", "-s", "-", merged], "codesign shared output")
     load = subprocess.check_output(["otool", "-l", merged], text=True)
     if "__coldhook" not in load or "libhooks.dylib" not in load:
