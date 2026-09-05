@@ -17,6 +17,7 @@ endif
 @@PROJECTNAME@@_FILES = .coldhook/Tweak.xm $(COLDHOOK)/coldhook/substrate/substrate.m $(COLDHOOK)/coldhook/substrate/coldhook_objc.m
 @@PROJECTNAME@@_CFLAGS = -fobjc-arc -I$(COLDHOOK)/coldhook/include -I$(COLDHOOK)/coldhook/substrate
 @@PROJECTNAME@@_LDFLAGS = -Wl,-no_warn_inits -Wl,-fixup_chains -Xlinker -add_split_seg_info \
+    -Wl,-not_for_dyld_shared_cache \
     -L$(COLDHOOK_RUNTIME_DIR) -lcoldhook -Wl,-rpath,$(COLDHOOK_RUNTIME_DIR)
 @@PROJECTNAME@@_FRAMEWORKS = Foundation
 
