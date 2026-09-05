@@ -61,7 +61,10 @@ def cmd_ipa(args) -> int:
 
 def cmd_shared(args) -> int:
     return 0 if ipa.patch_shared_bundle(args.input, args.dylib, args.out,
-                                        do_sign=args.sign_bundle) else 1
+                                        do_sign=args.sign_bundle,
+                                        import_path=args.import_path,
+                                        runtime=args.runtime,
+                                        verbose=args.verbose) else 1
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -104,6 +107,9 @@ def build_parser() -> argparse.ArgumentParser:
     ps = sub.add_parser("shared", help="применить один shared hook-dylib ко всем Mach-O в .app/.ipa")
     ps.add_argument("input", help="входной .app-каталог или .ipa-файл")
     ps.add_argument("--dylib", required=True, help="общий hook-dylib")
+    ps.add_argument("--runtime", help="libcoldhook.dylib для помещения в Frameworks (по умолчанию рядом с hook)")
+    ps.add_argument("--import-path", help="путь загрузки hook dylib (по умолчанию @executable_path/Frameworks/<name>)")
+    ps.add_argument("--verbose", action="store_true", help="печатать обработанные бинарники")
     ps.add_argument("--out", "-o", required=True, help="выходной .app-каталог")
     ps.add_argument("--sign-bundle", action="store_true",
                     help="подписать каждый обработанный Mach-O через ad-hoc codesign")
