@@ -43,10 +43,29 @@ func replaceColdhookHeader(_ output: inout Data, header: Data, limit: Int) {
     output.replaceSubrange(0..<limit, with: header + Data(repeating: 0, count: limit - header.count))
 }
 
-func makeColdhookSharedPlacements(_ plan: ColdhookSharedTargetPlan) -> [ColdhookFilePlacement] {
-    [
+func makeColdhookSharedPlacements(_ plan: ColdhookSharedTargetPlan,
+                                  originalTargetData: MachOMergeData? = nil) throws -> [ColdhookFilePlacement] {
+    var stubs = Data()
+    for hook in plan.hooks {
+        stubs.append(hook.stub.bytes)
+        var original = Data(repeating: 0, count: 8)
+        if let originalTargetData,
+           let source = originalTargetData.segments.first(where: {
+               hook.entryAddress >= $0.0.vmAddr && hook.entryAddress + 4 <= $0.0.vmAddr + $0.0.fileSize
+           }) {
+            let sourceOffset = Int(hook.entryAddress - source.0.vmAddr)
+            let instruction = source.1.withUnsafeBytes {
+                $0.load(fromByteOffset: sourceOffset, as: UInt32.self)
+            }
+            let branch = try encodeColdhookB(from: hook.origAddress + 4, to: hook.entryAddress + 4)
+            original.replaceSubrange(0..<4, with: Data(fromObject: instruction))
+            original.replaceSubrange(4..<8, with: Data(fromObject: branch))
+        }
+        stubs.append(original)
+    }
+    return [
         ColdhookFilePlacement(fileOffset: Int(plan.layout.stubFileOffset),
-                              data: materializeColdhookSharedStubs(plan)),
+                              data: stubs),
         ColdhookFilePlacement(fileOffset: Int(plan.layout.tableFileOffset),
                               data: plan.metadata.data)
     ].sorted { $0.fileOffset < $1.fileOffset }

@@ -97,19 +97,29 @@
 // assembler не принимает). Поля не должны содержать `__CH__`.
 #define CH_DYN_SYM(bin, sym, fn) \
   __asm__( \
+    ".section __DATA,__data\n.p2align 3\n" \
+    ".globl _coldhook_orig_slot_" #fn "\n" \
+    "_coldhook_orig_slot_" #fn ":\n    .quad 0\n" \
     ".text\n.p2align 2\n" \
     ".globl _COLDHOOK_DYN_SYM_" bin "__CH__" sym "__CH__" #fn "\n" \
     ".no_dead_strip _COLDHOOK_DYN_SYM_" bin "__CH__" sym "__CH__" #fn "\n" \
     "_COLDHOOK_DYN_SYM_" bin "__CH__" sym "__CH__" #fn ":\n    b _" #fn "\n" \
+    ".globl _coldhook_orig_" #fn "\n" \
+    "_coldhook_orig_" #fn ":\n    adrp x16, _coldhook_orig_slot_" #fn "@PAGE\n    ldr x16, [x16, _coldhook_orig_slot_" #fn "@PAGEOFF]\n    br x16\n" \
     ".section __DATA_CONST,__const\n.p2align 3\n" \
     "_coldhook_dyn_anchor_" #fn ":\n    .quad _COLDHOOK_DYN_SYM_" bin "__CH__" sym "__CH__" #fn "\n" \
   )
 #define CH_DYN_ADDR(bin, off, fn) \
   __asm__( \
+    ".section __DATA,__data\n.p2align 3\n" \
+    ".globl _coldhook_orig_slot_" #fn "\n" \
+    "_coldhook_orig_slot_" #fn ":\n    .quad 0\n" \
     ".text\n.p2align 2\n" \
     ".globl _COLDHOOK_DYN_ADDR_" bin "__CH__COLDHOOK_ADDR_" #off "__CH__" #fn "\n" \
     ".no_dead_strip _COLDHOOK_DYN_ADDR_" bin "__CH__COLDHOOK_ADDR_" #off "__CH__" #fn "\n" \
     "_COLDHOOK_DYN_ADDR_" bin "__CH__COLDHOOK_ADDR_" #off "__CH__" #fn ":\n    b _" #fn "\n" \
+    ".globl _coldhook_orig_" #fn "\n" \
+    "_coldhook_orig_" #fn ":\n    adrp x16, _coldhook_orig_slot_" #fn "@PAGE\n    ldr x16, [x16, _coldhook_orig_slot_" #fn "@PAGEOFF]\n    br x16\n" \
     ".section __DATA_CONST,__const\n.p2align 3\n" \
     "_coldhook_dyn_anchor_" #fn ":\n    .quad _COLDHOOK_DYN_ADDR_" bin "__CH__COLDHOOK_ADDR_" #off "__CH__" #fn "\n" \
   )

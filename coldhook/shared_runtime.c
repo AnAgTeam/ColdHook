@@ -102,6 +102,17 @@ static void process_image(const struct mach_header *header, intptr_t slide) {
 
         if (record->orig_image_offset != 0) {
             void *orig = (void *)(slide + (intptr_t)record->orig_image_offset);
+            char orig_slot_name[1024];
+            int written = snprintf(orig_slot_name, sizeof(orig_slot_name),
+                                   "coldhook_orig_slot_%s", name);
+            if (written > 0 && (size_t)written < sizeof(orig_slot_name)) {
+                void **orig_slot = (void **)dlsym(RTLD_DEFAULT, orig_slot_name);
+                if (!orig_slot) {
+                    fprintf(stderr, "coldhook: ORIG slot '%s' was not found\n", orig_slot_name);
+                    abort();
+                }
+                __atomic_store_n(orig_slot, orig, __ATOMIC_RELEASE);
+            }
             register_orig(record->orig_slot_key ? record->orig_slot_key : record->hook_id, orig);
         }
     }
