@@ -252,13 +252,13 @@ if coldhookModeArg == "shared" {
         let stubSegment = try makeColdhookSharedSegmentCommand(
             name: "__COLDHOOK_TEXT", vmAddr: assembly.plan.layout.stubVMAddr,
             fileOffset: assembly.plan.layout.stubFileOffset,
-            vmSize: assembly.plan.layout.stubSize, fileSize: assembly.plan.layout.stubSize,
+            vmSize: (assembly.plan.layout.stubSize + 0x3fff) & ~0x3fff, fileSize: assembly.plan.layout.stubSize,
             maxProt: VM_PROT_READ | VM_PROT_EXECUTE, initProt: VM_PROT_READ | VM_PROT_EXECUTE,
             sections: sharedSections["__COLDHOOK_TEXT"] ?? [])
         let dataSegment = try makeColdhookSharedSegmentCommand(
             name: "__COLDHOOK_DATA", vmAddr: assembly.plan.layout.tableVMAddr,
             fileOffset: assembly.plan.layout.tableFileOffset,
-            vmSize: assembly.plan.layout.tableSize, fileSize: assembly.plan.layout.tableSize,
+            vmSize: (assembly.plan.layout.tableSize + 0x3fff) & ~0x3fff, fileSize: assembly.plan.layout.tableSize,
             maxProt: VM_PROT_READ | VM_PROT_WRITE, initProt: VM_PROT_READ | VM_PROT_WRITE,
             sections: sharedSections["__COLDHOOK_DATA"] ?? [])
         let (segmentCount, segmentBytes) = generateColdhookSharedSegmentLoadCommands(assembly)
@@ -276,7 +276,7 @@ if coldhookModeArg == "shared" {
         let targetFileEnd = max(materializedEnd, payloadEnd)
         let linkeditOff = (max(targetFileEnd, aFile.count) + 0x3fff) & ~0x3fff
         let oldCount = Int(aFile.getGeneric(type: UInt32.self, offset: 0x10))
-        var commands = Data(); var ncmds = 0
+        var commands = Data(); var nonSegmentCommands = Data(); var ncmds = 0
         var pos = 0x20
         for _ in 0..<oldCount {
             let type = aFile.getGeneric(type: UInt32.self, offset: UInt(pos))
@@ -288,7 +288,7 @@ if coldhookModeArg == "shared" {
                 if name == "__LINKEDIT" { pos += size; continue }
                 pos += size; continue
             }
-            if type != UInt32(LC_CODE_SIGNATURE) {
+            if type != UInt32(LC_CODE_SIGNATURE) && type != UInt32(LC_SEGMENT_SPLIT_INFO) {
                 var patched = raw
                 func shift(_ at: Int) {
                     let value = patched.getGeneric(type: UInt32.self, offset: UInt(at))
@@ -299,7 +299,7 @@ if coldhookModeArg == "shared" {
                 if type == UInt32(LC_DYLD_CHAINED_FIXUPS) || type == UInt32(LC_DYLD_EXPORTS_TRIE) ||
                    type == UInt32(LC_FUNCTION_STARTS) || type == UInt32(LC_DATA_IN_CODE) { shift(8) }
                 if type == UInt32(LC_SYMTAB) { shift(8); shift(16) }
-                commands.append(patched); ncmds += 1
+                nonSegmentCommands.append(patched); ncmds += 1
             }
             pos += size
         }
@@ -314,7 +314,8 @@ if coldhookModeArg == "shared" {
         commands.append(segmentBytes); ncmds += segmentCount
         commands.append(stubSegment); commands.append(dataSegment); ncmds += 2
         commands.append(Data(fromObject: linkeditLC)); ncmds += 1
-        if let dylib = sharedDylibCommand(from: b) { commands.append(dylib); ncmds += 1 }
+        if let dylib = sharedDylibCommand(from: b) { nonSegmentCommands.append(dylib); ncmds += 1 }
+        commands.append(nonSegmentCommands)
         var header = mach_header_64(); header.magic = MH_MAGIC_64; header.cputype = CPU_TYPE_ARM64
         header.cpusubtype = Int32(bitPattern: a.cpuSubType); header.filetype = a.filetype.rawValue
         header.flags = aFile.getGeneric(type: UInt32.self, offset: 0x18)
@@ -877,7 +878,7 @@ func coldhookAppendAssemble(targetDataInput: MachOMergeData = dataA,
         // этого нет — там __DATA_CONST A и B сливаются в один сегмент. Без флага const-данные
         // хука просто не хардненятся read-only; фиксапы применяются как обычно.
         slc.flags    = part.origCommand.flags & ~UInt32(0x10)
-        var lc = Data(fromObject: slc)
+        var sectionData: [section_64] = []
         for sect in part.origCommand.sections {
             var s = section_64()
             _ = withUnsafeMutableBytes(of: &s.sectname) { strcpy($0.baseAddress!, sect.section) }
@@ -894,8 +895,14 @@ func coldhookAppendAssemble(targetDataInput: MachOMergeData = dataA,
             if coldhookInitMerge != nil, sect.section == "__init_offsets", (sect.flags.rawValue & 0xff) == 0x16 {
                 s.flags = sect.flags.rawValue & ~UInt32(0xff)
             }
-            lc.appendGeneric(value: s)
+            sectionData.append(s)
         }
+        let lc = try! makeAppendedSegmentCommand(
+            name: entry.0, vmAddr: newVM, fileOffset: UInt64(fileOff),
+            vmSize: part.origCommand.vmSize, fileSize: UInt64(part.data.count),
+            maxProt: Int32(bitPattern: part.origCommand.maximumProt.rawValue),
+            initProt: Int32(bitPattern: part.origCommand.protection.rawValue),
+            sections: sectionData, flags: part.origCommand.flags & ~UInt32(0x10))
         bSegmentLCs.append(lc)
         bPlacements.append((fileOff, part.data))
         bodyEnd = max(bodyEnd, fileOff + part.data.count)
