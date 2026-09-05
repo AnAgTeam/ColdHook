@@ -124,6 +124,41 @@
     "_coldhook_dyn_anchor_" #fn ":\n    .quad _COLDHOOK_DYN_ADDR_" bin "__CH__COLDHOOK_ADDR_" #off "__CH__" #fn "\n" \
   )
 
+// Shared gated variants: the target table resolves `coldhook_gate_<fn>` once;
+// subsequent enable/disable only switches the local writable dispatch slot.
+#define CH_DYN_SYM_GATED(bin, sym, fn) \
+  __asm__( \
+    ".section __DATA,__data\n.p2align 3\n" \
+    ".globl _coldhook_orig_slot_" #fn "\n" \
+    "_coldhook_orig_slot_" #fn ":\n    .quad 0\n" \
+    ".globl _coldhook_disp_" #fn "\n" \
+    "_coldhook_disp_" #fn ":\n    .quad 0\n" \
+    ".text\n.p2align 2\n" \
+    ".globl _coldhook_gate_" #fn "\n" \
+    "_coldhook_gate_" #fn ":\n    adrp x16, _coldhook_disp_" #fn "@PAGE\n    ldr x16, [x16, _coldhook_disp_" #fn "@PAGEOFF]\n    br x16\n" \
+    ".globl _COLDHOOK_DYN_SYM_" bin "__CH__" sym "__CH__coldhook_gate_" #fn "\n" \
+    ".no_dead_strip _COLDHOOK_DYN_SYM_" bin "__CH__" sym "__CH__coldhook_gate_" #fn "\n" \
+    "_COLDHOOK_DYN_SYM_" bin "__CH__" sym "__CH__coldhook_gate_" #fn ":\n    b _coldhook_gate_" #fn "\n" \
+    ".globl _coldhook_orig_" #fn "\n" \
+    "_coldhook_orig_" #fn ":\n    adrp x16, _coldhook_orig_slot_" #fn "@PAGE\n    ldr x16, [x16, _coldhook_orig_slot_" #fn "@PAGEOFF]\n    br x16\n" \
+  )
+#define CH_DYN_ADDR_GATED(bin, off, fn) \
+  __asm__( \
+    ".section __DATA,__data\n.p2align 3\n" \
+    ".globl _coldhook_orig_slot_" #fn "\n" \
+    "_coldhook_orig_slot_" #fn ":\n    .quad 0\n" \
+    ".globl _coldhook_disp_" #fn "\n" \
+    "_coldhook_disp_" #fn ":\n    .quad 0\n" \
+    ".text\n.p2align 2\n" \
+    ".globl _coldhook_gate_" #fn "\n" \
+    "_coldhook_gate_" #fn ":\n    adrp x16, _coldhook_disp_" #fn "@PAGE\n    ldr x16, [x16, _coldhook_disp_" #fn "@PAGEOFF]\n    br x16\n" \
+    ".globl _COLDHOOK_DYN_ADDR_" bin "__CH__COLDHOOK_ADDR_" #off "__CH__coldhook_gate_" #fn "\n" \
+    ".no_dead_strip _COLDHOOK_DYN_ADDR_" bin "__CH__COLDHOOK_ADDR_" #off "__CH__coldhook_gate_" #fn "\n" \
+    "_COLDHOOK_DYN_ADDR_" bin "__CH__COLDHOOK_ADDR_" #off "__CH__coldhook_gate_" #fn ":\n    b _coldhook_gate_" #fn "\n" \
+    ".globl _coldhook_orig_" #fn "\n" \
+    "_coldhook_orig_" #fn ":\n    adrp x16, _coldhook_orig_slot_" #fn "@PAGE\n    ldr x16, [x16, _coldhook_orig_slot_" #fn "@PAGEOFF]\n    br x16\n" \
+  )
+
 // --- GATED хук: статически установлен, но рантайм-переключаемый ----------------------
 // Для Logos-групп (`%init(Group)`) и рантайм вкл/выкл: первую инструкцию цели мёрджер
 // патчит не прямо на замену, а на ТОНКИЙ THUNK, прыгающий через указатель `coldhook_disp_<fn>`
