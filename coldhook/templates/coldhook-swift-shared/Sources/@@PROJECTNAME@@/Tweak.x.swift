@@ -2,12 +2,13 @@
 // Replace the @_silgen_name values and signature with your target's ABI.
 import Foundation
 
-@_silgen_name("coldhook_orig_ch_hook")
+// @ColdHookMangled(binary: "TestSwiftApp", target: "$s12TestSwiftApp3url3forS2S_tF")
+
+@_silgen_name("coldhook_orig_1")
 func ch_orig(_ arg: String) -> String
 
-@_silgen_name("ch_hook")
-public func ch_hook(_ arg: String) -> String {
+@_silgen_name("coldhook_handler_1")
+public func coldhook_handler_1(_ arg: String) -> String {
     if arg == "trigger" { return "patched by @@PROJECTNAME@@" }
     return ch_orig(arg)
 }
-
