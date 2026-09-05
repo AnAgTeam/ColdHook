@@ -45,14 +45,16 @@ def main():
                 '  if (getpid() > 0 && n == 0) return "ORIG"; __builtin_trap(); }\n')
     with open(hooks_src, "w") as f:
         f.write('#include "coldhook_shared.h"\n#include "coldhook.h"\n'
-                'extern void *coldhook_shared_orig_lookup(unsigned long long);\n'
+                '#include <stdlib.h>\nextern void *coldhook_shared_orig_lookup(unsigned long long);\n'
                 'CH_DECLARE_ORIG(domain_for_hook, const char *, int);\n'
-                '__attribute__((constructor)) static void boot(void){ (void)coldhook_shared_orig_lookup; }\n'
+                'CH_DECLARE_GATE(domain_for_hook);\n'
+                'const char *domain_for_hook(int);\n'
+                '__attribute__((constructor)) static void boot(void){ if(getenv("CH_ON")) CH_GATE_ENABLE(domain_for_hook); }\n'
                 '__attribute__((visibility("default"))) const char *domain_for_hook(int n){\n'
                 '  if (coldhook_orig_domain_for_hook(n)[0] != \'O\') return "BAD-ORIG";\n'
                 '  return "SHARED-HOOK";\n}\n')
     with open(hooks_src, "a") as f:
-        f.write('CH_DYN_SYM("libtarget", "domain_for", domain_for_hook);\n')
+        f.write('CH_DYN_SYM_GATED("libtarget", "domain_for", domain_for_hook);\n')
     with open(driver_src, "w") as f:
         f.write('#include <dlfcn.h>\n#include <stdio.h>\n'
                 'int main(int c,char**v){void*h=dlopen(v[1],RTLD_NOW);'
@@ -91,9 +93,14 @@ def main():
     check(cc("-o", driver, driver_src), "driver build")
     result = run([driver, merged], capture_output=True, text=True)
     sys.stdout.write(result.stdout); sys.stderr.write(result.stderr)
+    if result.returncode or "domain_for=ORIG" not in result.stdout:
+        raise RuntimeError("shared gated hook did not default to ORIG")
+    result = run([driver, merged], capture_output=True, text=True,
+                 env={**os.environ, "CH_ON": "1"})
+    sys.stdout.write(result.stdout); sys.stderr.write(result.stderr)
     if result.returncode or "SHARED-HOOK" not in result.stdout:
-        raise RuntimeError("shared hook did not execute")
-    print("OK: shared table bootstrap + hook dispatch")
+        raise RuntimeError("shared gated hook did not enable")
+    print("OK: shared table bootstrap + gated dispatch")
 
 if __name__ == "__main__":
     try:

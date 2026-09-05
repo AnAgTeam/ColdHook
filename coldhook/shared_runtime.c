@@ -102,9 +102,13 @@ static void process_image(const struct mach_header *header, intptr_t slide) {
 
         if (record->orig_image_offset != 0) {
             void *orig = (void *)(slide + (intptr_t)record->orig_image_offset);
+            const char *base_name = name;
+            static const char gate_prefix[] = "coldhook_gate_";
+            if (strncmp(name, gate_prefix, sizeof(gate_prefix) - 1) == 0)
+                base_name += sizeof(gate_prefix) - 1;
             char orig_slot_name[1024];
             int written = snprintf(orig_slot_name, sizeof(orig_slot_name),
-                                   "coldhook_orig_slot_%s", name);
+                                   "coldhook_orig_slot_%s", base_name);
             if (written > 0 && (size_t)written < sizeof(orig_slot_name)) {
                 void **orig_slot = (void **)dlsym(RTLD_DEFAULT, orig_slot_name);
                 if (!orig_slot) {
@@ -112,6 +116,18 @@ static void process_image(const struct mach_header *header, intptr_t slide) {
                     abort();
                 }
                 __atomic_store_n(orig_slot, orig, __ATOMIC_RELEASE);
+            }
+            if (base_name != name) {
+                char dispatch_name[1024];
+                written = snprintf(dispatch_name, sizeof(dispatch_name),
+                                   "coldhook_disp_%s", base_name);
+                if (written <= 0 || (size_t)written >= sizeof(dispatch_name)) abort();
+                void **dispatch = (void **)dlsym(RTLD_DEFAULT, dispatch_name);
+                if (!dispatch) {
+                    fprintf(stderr, "coldhook: gated dispatch '%s' was not found\n", dispatch_name);
+                    abort();
+                }
+                __atomic_store_n(dispatch, orig, __ATOMIC_RELEASE);
             }
             register_orig(record->orig_slot_key ? record->orig_slot_key : record->hook_id, orig);
         }
