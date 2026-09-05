@@ -11,7 +11,8 @@ import MachO
 func generateSegmentLoadCommands(infoA: MachOMergeData, infoB: MachOMergeData, relocInfo: RelocInfo,
                                  extraSections: [String: [section_64]] = [:],
                                  segmentGrowth: [String: (vmSize: UInt64, fileSize: UInt64)] = [:],
-                                 reserveHeader: Bool = true) -> (Int, Data) {
+                                 reserveHeader: Bool = true,
+                                 extraSegments: [Data] = []) -> (Int, Data) {
     var result = Data()
     // ColdHook: «заголовочный» сегмент (туда резервируется 0x4000 под mach header) — первый
     // НЕ-__PAGEZERO. Для dylib это index 0; для исполняемого — index 1 (после __PAGEZERO).
@@ -171,5 +172,6 @@ func generateSegmentLoadCommands(infoA: MachOMergeData, infoB: MachOMergeData, r
         result.append(sectsData)
     }
     
-    return (relocInfo.segRel.count, result)
+    for segment in extraSegments { result.append(segment) }
+    return (relocInfo.segRel.count + extraSegments.count, result)
 }
