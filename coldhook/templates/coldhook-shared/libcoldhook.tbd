@@ -1,0 +1,10 @@
+---
+archs:           [ arm64, arm64e, x86_64 ]
+platform:        ios
+install-name:    '@rpath/libcoldhook.dylib'
+current-version: 1.0.0
+exports:
+  - archs:           [ arm64, arm64e, x86_64 ]
+    symbols:         [ _coldhook_last_error, _coldhook_runtime_version,
+                       _coldhook_shared_find_orig, _coldhook_shared_orig_lookup ]
+...
