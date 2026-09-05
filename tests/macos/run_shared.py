@@ -41,11 +41,13 @@ def main():
                 '__attribute__((visibility("default"))) const char *domain_for(int n){\n'
                 '  if (getpid() > 0 && n == 0) return "ORIG"; __builtin_trap(); }\n')
     with open(hooks_src, "w") as f:
-        f.write('#include "coldhook_shared.h"\n'
+        f.write('#include "coldhook_shared.h"\n#include "coldhook.h"\n'
                 'extern void *coldhook_shared_orig_lookup(unsigned long long);\n'
                 '__attribute__((constructor)) static void boot(void){ (void)coldhook_shared_orig_lookup; }\n'
-                '__attribute__((visibility("default"))) const char *MACHOMERGER_HOOK_domain_for(int n){\n'
+                '__attribute__((visibility("default"))) const char *domain_for_hook(int n){\n'
                 '  (void)n; return "SHARED-HOOK";\n}\n')
+    with open(hooks_src, "a") as f:
+        f.write('CH_DYN_SYM("MainBinary", "domain_for", domain_for_hook);\n')
     with open(driver_src, "w") as f:
         f.write('#include <dlfcn.h>\n#include <stdio.h>\n'
                 'int main(int c,char**v){void*h=dlopen(v[1],RTLD_NOW);'

@@ -150,7 +150,9 @@ func planColdhookSharedTarget(
     userHooksResolver: ColdhookSymbolResolver
 ) throws -> ColdhookSharedTargetPlan {
     let declarations = try extractColdhookSharedSpecs(from: userHooksResolver, data: userHooksData)
-    let hookSymbols = userHooksResolver.all(prefix: "_MACHOMERGER_HOOK_")
+    let hookSymbols = userHooksResolver.all(prefix: "_COLDHOOK_").filter {
+        $0.name.hasPrefix("_COLDHOOK_DYN_") || $0.name.hasPrefix("_COLDHOOK_SYM_") || $0.name.hasPrefix("_COLDHOOK_ADDR_")
+    }
     guard declarations.count == hookSymbols.count else {
         throw ColdhookSharedAssemblerError.targetNotFound("inconsistent hook declarations")
     }
@@ -178,7 +180,19 @@ func planColdhookSharedTarget(
     var entries: [UInt64] = []
     for (index, declaration) in declarations.enumerated() {
         let magic = hookSymbols[index]
-        let locator = String(magic.name.dropFirst("_MACHOMERGER_HOOK_".count))
+        let locator: String
+        if magic.name.hasPrefix("_COLDHOOK_DYN_") {
+            let fields = String(magic.name.dropFirst("_COLDHOOK_DYN_".count)).components(separatedBy: "__")
+            guard fields.count == 3 else {
+                throw ColdhookSharedAssemblerError.targetNotFound("invalid dynamic declaration \(magic.name)")
+            }
+            let value = String(fields[1])
+            locator = value.hasPrefix("COLDHOOK_ADDR_") ? "_" + value : value
+        } else if magic.name.hasPrefix("_COLDHOOK_SYM_") {
+            locator = String(magic.name.dropFirst("_COLDHOOK_SYM_".count))
+        } else {
+            locator = "_COLDHOOK_ADDR_" + String(magic.name.dropFirst("_COLDHOOK_ADDR_".count))
+        }
         entries.append(try sharedTargetAddress(locator, resolver: targetResolver))
         let origAddress = layout.stubVMAddr + UInt64(index * 20 + 12)
         finalSpecs.append(ColdhookSharedSpec(

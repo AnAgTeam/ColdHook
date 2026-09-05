@@ -39,17 +39,33 @@ private func readBInstruction(_ address: UInt64, from data: MachOMergeData) -> U
     return nil
 }
 
-/// Reads the same `_MACHOMERGER_HOOK_*` declarations consumed by embedded mode.
+/// Reads ColdHook magic declarations. Dynamic forms encode selector, locator and
+/// handler as `_COLDHOOK_DYN_<kind>_<selector>__<locator>__<handler>`.
 /// In a normal clang-produced dylib the magic symbol is the handler itself (its
 /// first instruction is a prologue, not a branch), so the handler name is derived
 /// directly from the magic symbol rather than decoding code bytes.
 func extractColdhookSharedSpecs(from resolver: ColdhookSymbolResolver, data: MachOMergeData)
     throws -> [ColdhookSharedSpec] {
     var specs: [ColdhookSharedSpec] = []
-    let hooks = resolver.all(prefix: "_MACHOMERGER_HOOK_")
+    let hooks = resolver.all(prefix: "_COLDHOOK_").filter {
+        $0.name.hasPrefix("_COLDHOOK_DYN_") || $0.name.hasPrefix("_COLDHOOK_SYM_") || $0.name.hasPrefix("_COLDHOOK_ADDR_")
+    }
     for hook in hooks {
-        let locator = String(hook.name.dropFirst("_MACHOMERGER_HOOK_".count))
-        let handlerName = String(hook.name.dropFirst())
+        let locator: String
+        let handlerName: String
+        if hook.name.hasPrefix("_COLDHOOK_DYN_") {
+            let payload = String(hook.name.dropFirst("_COLDHOOK_DYN_".count))
+            let parts = payload.components(separatedBy: "__")
+            guard parts.count == 3 else { throw ColdhookSharedHookError.invalidBranch(hook.name) }
+            locator = parts[1]
+            handlerName = parts[2]
+        } else if hook.name.hasPrefix("_COLDHOOK_SYM_") {
+            locator = String(hook.name.dropFirst("_COLDHOOK_SYM_".count))
+            handlerName = locator
+        } else {
+            locator = "_COLDHOOK_ADDR_" + String(hook.name.dropFirst("_COLDHOOK_ADDR_".count))
+            handlerName = locator
+        }
         specs.append(ColdhookSharedSpec(
             hookID: fnv1a(locator),
             handlerName: handlerName,
