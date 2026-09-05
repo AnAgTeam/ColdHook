@@ -101,12 +101,18 @@ def patch_shared_bundle(inp: str, dylib: str, out: str, do_sign: bool = False) -
             stage = os.path.join(work, os.path.basename(inp))
             shutil.copytree(inp, stage, symlinks=True)
         app = _find_app(stage)
+        # Shared sideload bundles carry the hook runtime with the app.  The
+        # merger rewrites LC_LOAD_DYLIB to @executable_path/Frameworks/<name>.
+        frameworks = os.path.join(app, "Frameworks")
+        os.makedirs(frameworks, exist_ok=True)
+        bundled_dylib = os.path.join(frameworks, os.path.basename(dylib))
+        shutil.copy2(dylib, bundled_dylib)
         dylib_real = os.path.realpath(dylib)
         patched = 0
         for root, _, files in os.walk(stage):
             for name in files:
                 target = os.path.join(root, name)
-                if os.path.realpath(target) == dylib_real:
+                if os.path.realpath(target) in (dylib_real, os.path.realpath(bundled_dylib)):
                     continue
                 try:
                     build.macho.inspect(target)
