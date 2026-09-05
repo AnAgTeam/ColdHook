@@ -80,7 +80,8 @@ def patch_bundle(inp: str, config: Config, out: str, do_sign: bool = False) -> s
 
 
 def patch_shared_bundle(inp: str, dylib: str, out: str, do_sign: bool = False,
-                        import_path: str | None = None, verbose: bool = False) -> str:
+                        import_path: str | None = None, runtime: str | None = None,
+                        verbose: bool = False) -> str:
     """Apply one shared hook dylib to every Mach-O in an app bundle.
 
     File discovery is deliberately dumb: every regular file is probed, and the
@@ -89,6 +90,12 @@ def patch_shared_bundle(inp: str, dylib: str, out: str, do_sign: bool = False,
     build.toolchain.ensure_merger()
     if not os.path.exists(dylib):
         raise PatchError(f"shared hook-dylib не найден: {dylib}")
+    if runtime is None:
+        candidate = os.path.join(os.path.dirname(os.path.abspath(dylib)), "libcoldhook.dylib")
+        if os.path.exists(candidate):
+            runtime = candidate
+    if not runtime or not os.path.exists(runtime):
+        raise PatchError("shared runtime не найден; укажи --runtime /path/to/libcoldhook.dylib")
     work = tempfile.mkdtemp(prefix="coldhook_shared_bundle_")
     is_ipa = inp.lower().endswith(".ipa") or os.path.isfile(inp)
     try:
@@ -110,12 +117,17 @@ def patch_shared_bundle(inp: str, dylib: str, out: str, do_sign: bool = False,
             os.makedirs(frameworks, exist_ok=True)
             bundled_dylib = os.path.join(frameworks, os.path.basename(dylib))
             shutil.copy2(dylib, bundled_dylib)
+        runtime_dest = os.path.join(app, "Frameworks", os.path.basename(runtime))
+        os.makedirs(os.path.dirname(runtime_dest), exist_ok=True)
+        shutil.copy2(runtime, runtime_dest)
         dylib_real = os.path.realpath(dylib)
         patched = 0
         for root, _, files in os.walk(stage):
             for name in files:
                 target = os.path.join(root, name)
-                if os.path.realpath(target) == dylib_real or (bundled_dylib and os.path.realpath(target) == os.path.realpath(bundled_dylib)):
+                if (os.path.realpath(target) == dylib_real
+                        or (bundled_dylib and os.path.realpath(target) == os.path.realpath(bundled_dylib))
+                        or os.path.realpath(target) == os.path.realpath(runtime_dest)):
                     continue
                 try:
                     build.macho.inspect(target)
