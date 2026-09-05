@@ -6,6 +6,15 @@
 //
 
 import SwiftUI
+import Darwin
+
+private func frameworkLabel() -> String {
+    guard let handle = dlopen("@rpath/TestFramework.framework/TestFramework", RTLD_NOW),
+          let symbol = dlsym(handle, "framework_probe") else { return "Framework unavailable" }
+    typealias Probe = @convention(c) () -> Int32
+    let value = unsafeBitCast(symbol, to: Probe.self)()
+    return "Framework value: \(value)"
+}
 
 // Мишень №1: подмена возвращаемой строки.
 // @inline(never) — чтобы функция осталась отдельной с символом, а не заинлайнилась в body.
@@ -40,6 +49,7 @@ struct ContentView: View {
                 .imageScale(.large)
                 .foregroundStyle(.tint)
             Text(get_label_content())
+            Text(frameworkLabel())
 
             // Тап вызывает url(for:) с неизвестным доменом → assertionFailure.
             // После патча ColdHook здесь должна вернуться строка вместо краша.
