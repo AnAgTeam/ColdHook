@@ -32,8 +32,8 @@ func coldhookFlagValue(_ name: String) -> String? {
     return nil
 }
 let coldhookModeArg = (coldhookFlagValue("--mode") ?? "auto").lowercased()
-guard ["auto", "append", "interleave"].contains(coldhookModeArg) else {
-    print("Unknown --mode '\(coldhookModeArg)'. Use: auto | append | interleave")
+guard ["auto", "append", "interleave", "shared"].contains(coldhookModeArg) else {
+    print("Unknown --mode '\(coldhookModeArg)'. Use: auto | append | interleave | shared")
     exit(-1)
 }
 
@@ -46,7 +46,7 @@ for arg in CommandLine.arguments.dropFirst() {
     coldhookPosArgs.append(arg)
 }
 guard coldhookPosArgs.count == 3 else {
-    print("Usage: MachOMerger <a> <b> <out> [--allow-new-dylibs] [--mode auto|append|interleave]")
+    print("Usage: MachOMerger <a> <b> <out> [--allow-new-dylibs] [--mode auto|append|interleave|shared]")
     exit(-1)
 }
 
@@ -225,6 +225,73 @@ let coldhookBase: UInt64 = coldhookHasPageZero
     ? (dataA.segments.first(where: { $0.0.name != "__PAGEZERO" })?.0.vmAddr ?? 0)
     : 0
 
+if coldhookModeArg == "shared" {
+    func sharedDylibCommand(from image: MachO) -> Data? {
+        var pos = 0x20
+        let count = image.data.getGeneric(type: UInt32.self, offset: 0x10)
+        for _ in 0..<count {
+            let type = image.data.getGeneric(type: UInt32.self, offset: UInt(pos))
+            let size = Int(image.data.getGeneric(type: UInt32.self, offset: UInt(pos + 4)))
+            if type == UInt32(LC_ID_DYLIB), size >= 24 {
+                var raw = image.data.subdata(in: pos..<(pos + size))
+                raw.replaceSubrange(0..<4, with: Data(fromObject: UInt32(LC_LOAD_DYLIB)))
+                return raw
+            }
+            pos += size
+        }
+        return nil
+    }
+
+    do {
+        let assembly = try prepareColdhookSharedTarget(
+            targetData: dataA,
+            targetResolver: makeColdhookSymbolResolver(dataA.symtab),
+            userHooksData: dataB,
+            userHooksResolver: makeColdhookSymbolResolver(dataB.symtab))
+        let (segmentCount, segmentBytes) = generateColdhookSharedSegmentLoadCommands(assembly)
+        let aFile = a.data
+        let oldCount = Int(aFile.getGeneric(type: UInt32.self, offset: 0x10))
+        var commands = Data(); var ncmds = 0
+        var pos = 0x20
+        for _ in 0..<oldCount {
+            let type = aFile.getGeneric(type: UInt32.self, offset: UInt(pos))
+            let size = Int(aFile.getGeneric(type: UInt32.self, offset: UInt(pos + 4)))
+            let raw = aFile.subdata(in: pos..<(pos + size))
+            if type == UInt32(LC_SEGMENT_64) {
+                var nameBytes = [UInt8](raw.subdata(in: 8..<24)); nameBytes.append(0)
+                let name = String(cString: nameBytes)
+                if name != "__LINKEDIT" { pos += size; continue }
+            }
+            if type != UInt32(LC_CODE_SIGNATURE) {
+                commands.append(raw); ncmds += 1
+            }
+            pos += size
+        }
+        commands.append(segmentBytes); ncmds += segmentCount
+        if let dylib = sharedDylibCommand(from: b) { commands.append(dylib); ncmds += 1 }
+        var header = mach_header_64(); header.magic = MH_MAGIC_64; header.cputype = CPU_TYPE_ARM64
+        header.cpusubtype = Int32(bitPattern: a.cpuSubType); header.filetype = a.filetype.rawValue
+        header.flags = aFile.getGeneric(type: UInt32.self, offset: 0x18)
+        header.ncmds = UInt32(ncmds); header.sizeofcmds = UInt32(commands.count)
+        var headerData = Data(fromObject: header); headerData.append(commands)
+        let limit = Int(dataA.segments.first(where: { $0.0.name == "__TEXT" })?.0.sections.compactMap { $0.offset == 0 ? nil : UInt64($0.offset) }.min() ?? 0x4000)
+        guard headerData.count <= limit else { throw ColdhookSharedAssemblerError.payloadNotContiguous("header") }
+        var output = aFile
+        if output.count < limit { output.append(Data(repeating: 0, count: limit - output.count)) }
+        for (command, bytes) in assembly.targetData.segments where command.fileSize > 0 {
+            // Segment bytes are written at the command's original file offset.
+            let off = Int(command.fileOffset), end = off + bytes.count
+            if output.count < end { output.append(Data(repeating: 0, count: end - output.count)) }
+            output.replaceSubrange(off..<end, with: bytes)
+        }
+        // __TEXT's segment bytes include the old header; install the new header last.
+        output.replaceSubrange(0..<limit, with: headerData + Data(repeating: 0, count: limit - headerData.count))
+        try output.write(to: URL(fileURLWithPath: coldhookPosArgs[2]))
+        print("Done! (shared-режим: \(assembly.plan.hooks.count) hook(s))")
+    } catch { print("shared: \(error)"); exit(-1) }
+    exit(0)
+}
+
 // ColdHook: APPEND-режим. Реальный таргет A (приложение или framework-dylib) идёт БЕЗ
 // LC_SEGMENT_SPLIT_INFO — мёрджер не может его релоцировать. Поэтому A НЕ двигаем (offset 0,
 // фиксапы/symtab/entry валидны как есть), а сегменты хука B аппендим ПОСЛЕ A на новые vmaddr'ы.
@@ -399,28 +466,6 @@ fixupViaSplitInfo(infoA: dataA, infoB: dataB, relocInfo: relocInfo)
 // What's left is essentially chained fixups and a few others
 let newChainedFixups = mergeChainedFixups(infoA: dataA, infoB: dataB, relocInfo: relocInfo, machOA: a, machOB: b)
 
-// ColdHook: сырой разбор symtab (nlist_64) — устойчив к Swift/стрипнутым бинарям, в отличие
-// от SwiftMachO.getSymbolTable. name из пула строк по n_strx; n_type для отбора DEFINED (N_SECT).
-struct ColdhookSym { let name: String; let value: UInt64; let type: UInt8 }
-func coldhookParseSymtab(_ st: (symbols: Data, strings: Data)?) -> [ColdhookSym] {
-    guard let st = st else { return [] }
-    var res: [ColdhookSym] = []
-    for i in 0..<(st.symbols.count / 16) {
-        let base = UInt(i * 16)
-        let strx = st.symbols.getGeneric(type: UInt32.self, offset: base)
-        let type = st.symbols.getGeneric(type: UInt8.self, offset: base + 4)
-        let value = st.symbols.getGeneric(type: UInt64.self, offset: base + 8)
-        // Пропускаем STAB/отладочные символы (n_type & N_STAB=0xe0): debug-сборки (theos `make`
-        // без release, -g) дублируют функции STABS-записями с тем же именем — иначе магик-символ
-        // _MACHOMERGER_HOOK_* обработался бы дважды (2-й раз читая уже пропатченную 1-ю инструкцию).
-        guard (type & 0xe0) == 0 else { continue }
-        guard Int(strx) < st.strings.count else { continue }
-        let name = (try? st.strings.advanced(by: Int(strx)).toString(encoding: .utf8, nullTerminated: true)) ?? ""
-        if !name.isEmpty { res.append(ColdhookSym(name: name, value: value, type: type)) }
-    }
-    return res
-}
-
 // ColdHook: первая инструкция цели сохраняется в ORIG-слот (чтобы хук мог звать оригинал).
 // Если она PC-relative (cbz/cbnz/tbz/b.cond/b/adr/adrp — частые прологи Swift на guard'ах
 // первого аргумента), её НАДО переэнкодить под адрес слота: относительный таргет иначе
@@ -466,9 +511,11 @@ func coldhookReencodeForSlot(_ insn: UInt32, fromAddr: UInt64, slot: UInt64) -> 
 // SwiftMachO.getSymbolTable: тот падает (BadFormat) на symtab реальных и Swift-бинарей, из-за
 // чего магик-символы _MACHOMERGER_HOOK_* не находились и патч молча не применялся.
 // Резолв имени A учитывает только DEFINED-символы (N_SECT); by-offset (_COLDHOOK_ADDR) его не требует.
-let bSyms = coldhookParseSymtab(dataB.symtab)
-let aSyms = coldhookParseSymtab(dataA.symtab)
-func aSym(_ name: String) -> ColdhookSym? { aSyms.first(where: { $0.name == name && ($0.type & 0x0e) == 0x0e }) }
+let bSymbolResolver = makeColdhookSymbolResolver(dataB.symtab)
+let aSymbolResolver = makeColdhookSymbolResolver(dataA.symtab)
+let bSyms = bSymbolResolver.symbols
+let aSyms = aSymbolResolver.symbols
+func aSym(_ name: String) -> ColdhookSym? { aSymbolResolver.first(name, definedOnly: true) }
 if !bSyms.isEmpty {
     for sym in bSyms {
         if sym.name.starts(with: "_MACHOMERGER_TRAMPOLINE_") {
@@ -490,14 +537,9 @@ if !bSyms.isEmpty {
             let at = relocInfo.translate(address: sym.value, isB: true)
             let to = relocInfo.translate(address: dstAddr, isB: false)
             
-            let delta = Int64(bitPattern: to &- at)
-            let deltaSh = delta >> 2
-            guard deltaSh <= 0x3FFFFFF && deltaSh >= -0x3FFFFFF else {
-                print("Cannot generate trampoline: Delta too large!")
-                exit(-1)
-            }
-            
-            let instr = 0x14000000 | UInt32(deltaSh & 0x03FFFFFF)
+            let instr: UInt32
+            do { instr = try encodeColdhookB(from: at, to: to) }
+            catch { print("Cannot generate trampoline: \(error)"); exit(-1) }
             
             // Write it
             let seg = relocInfo.segment(forOrigAddress: sym.value, isB: true)!
@@ -524,14 +566,9 @@ if !bSyms.isEmpty {
             let at = relocInfo.translate(address: sym.value, isB: true)
             let to = relocInfo.translate(address: dstAddr, isB: false) + 4
             
-            let delta = Int64(bitPattern: to &- at)
-            let deltaSh = delta >> 2
-            guard deltaSh <= 0x3FFFFFF && deltaSh >= -0x3FFFFFF else {
-                print("Cannot generate trampoline: Delta too large!")
-                exit(-1)
-            }
-            
-            let instr = 0x14000000 | UInt32(deltaSh & 0x03FFFFFF)
+            let instr: UInt32
+            do { instr = try encodeColdhookB(from: at, to: to) }
+            catch { print("Cannot generate trampoline: \(error)"); exit(-1) }
             
             // Write it
             let seg = relocInfo.segment(forOrigAddress: sym.value, isB: true)!
@@ -564,14 +601,9 @@ if !bSyms.isEmpty {
             let to = relocInfo.translate(address: sym.value, isB: true)
             let at = relocInfo.translate(address: dstAddr, isB: false)
             
-            let delta = Int64(bitPattern: to &- at)
-            let deltaSh = delta >> 2
-            guard deltaSh <= 0x3FFFFFF && deltaSh >= -0x3FFFFFF else {
-                print("Cannot generate trampoline: Delta too large!")
-                exit(-1)
-            }
-            
-            let instr = 0x14000000 | UInt32(deltaSh & 0x03FFFFFF)
+            let instr: UInt32
+            do { instr = try encodeColdhookB(from: at, to: to) }
+            catch { print("Cannot generate trampoline: \(error)"); exit(-1) }
             
             // Write it
             let seg = relocInfo.segment(forOrigAddress: dstAddr, isB: false)!
@@ -884,18 +916,20 @@ func coldhookAppendAssemble() -> Data {
     // --- Файл: [новый заголовок + секции A] + сегменты B + __LINKEDIT ---
     // A-контент берём из relocInfo, а НЕ из aFile: там уже патчи хука (HOOK-инструкция в
     // первой инструкции цели, сохранённый ORIG). aFile — оригинал без патчей.
-    var out = Data()
+    var targetPlacements: [ColdhookFilePlacement] = []
     for entry in relocInfo.segRel where !entry.1[0].isB {
         let part = entry.1[0]
         if part.data.isEmpty { continue }   // __PAGEZERO (нет файлового контента)
         let fo = Int(part.origCommand.fileOffset)
-        if out.count < fo { out.append(Data(repeating: 0, count: fo - out.count)) }
-        out.append(part.data)
+        targetPlacements.append(ColdhookFilePlacement(fileOffset: fo, data: part.data))
     }
-    out.replaceSubrange(0..<headerLimit, with: header)
+    var out = assembleColdhookPlacements(targetPlacements)
+    replaceColdhookHeader(&out, header: header, limit: headerLimit)
     for p in bPlacements {
-        if out.count < p.fileOff { out.append(Data(repeating: 0, count: p.fileOff - out.count)) }
-        out.append(p.data)
+        let payload = assembleColdhookPlacements([
+            ColdhookFilePlacement(fileOffset: p.fileOff, data: p.data)
+        ])
+        if out.count < payload.count { out.append(payload.suffix(from: out.count)) }
     }
     if out.count < linkeditFileOff { out.append(Data(repeating: 0, count: linkeditFileOff - out.count)) }
     out.append(linkedit)
@@ -910,15 +944,7 @@ if coldhookAppendMode {
 }
 
 // Generate most of the MachO content, except header
-var machOData = Data()
-
-for seg in relocInfo.segRel {
-    machOData += seg.1[0].data
-    
-    if seg.1.count == 2 {
-        machOData += seg.1[1].data
-    }
-}
+let machOData = assembleColdhookSegmentData(relocInfo)
 
 // Generate the MachO itself
 var machOHdr = Data()
@@ -1034,9 +1060,12 @@ guard machOHdr.count < 0x4000 else {
     exit(-1)
 }
 
-machOHdr.append(Data(repeating: 0, count: 0x4000 - machOHdr.count))
-
-var out = machOHdr + machOData + linkedit
+let out = assembleColdhookMachO(ColdhookMachOOutputPayload(
+    header: machOHdr,
+    targetData: machOData,
+    secondaryPlacements: [],
+    linkedit: linkedit
+))
 
 try out.write(to: URL(fileURLWithPath: coldhookPosArgs[2]))
 
