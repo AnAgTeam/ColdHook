@@ -80,12 +80,14 @@ def build_hook(sources: list[str], out: str, arch: str, platform: str, minos: st
 
 
 def merge(target: str, hook: str, out: str, allow_new_dylibs: bool = False,
-          mode: str | None = None) -> None:
+          mode: str | None = None, import_path: str | None = None) -> None:
     cmd = [ensure_merger(), target, hook, out]
     if allow_new_dylibs:
         cmd.append("--allow-new-dylibs")
     if mode:
         cmd += ["--mode", mode]
+    if import_path:
+        cmd += ["--import-path", import_path]
     _run(cmd, "merge")
 
 
