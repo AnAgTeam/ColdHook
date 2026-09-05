@@ -1,0 +1,8 @@
+Package: @@PACKAGENAME@@
+Name: @@PROJECTNAME@@
+Version: 0.0.1
+Architecture: iphoneos-arm64
+Description: shared Swift ColdHook tweak
+Author: @@USER@@
+Section: Tweaks
+

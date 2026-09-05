@@ -17,6 +17,7 @@ TEMPLATES = [
     # embedded templates remain in-tree for compatibility/tests but are not
     # advertised by NIC installation.
     ("coldhook-shared", "iphone/coldhook_tweak"),
+    ("coldhook-swift-shared", "iphone/coldhook_tweak_swift"),
 ]
 
 

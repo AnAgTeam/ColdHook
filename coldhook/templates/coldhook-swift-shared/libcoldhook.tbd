@@ -1,0 +1,10 @@
+--- !tapi-tbd
+tbd-version:     4
+targets:         [ arm64-ios, arm64e-ios ]
+install-name:    '@rpath/libcoldhook.dylib'
+current-version: 1.0.0
+exports:
+  - targets:         [ arm64-ios, arm64e-ios ]
+    symbols:         [ _coldhook_last_error, _coldhook_runtime_version,
+                       _coldhook_shared_find_orig, _coldhook_shared_orig_lookup ]
+...
