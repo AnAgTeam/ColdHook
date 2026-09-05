@@ -33,9 +33,9 @@
 
 // --- регистрация хука по адресу ------------------------------------------------------
 // Раскрывается в file-scope inline-asm, который генерит магик-символы для мёрджера:
-//   _MACHOMERGER_HOOK_COLDHOOK_ADDR_<off>      : ветка на функцию-хук;
-//   _MACHOMERGER_ORIG_COLDHOOK_ADDR_<off>      : слот сохранённой 1-й инструкции цели;
-//   _MACHOMERGER_HOOKTRAMPOLINE_COLDHOOK_ADDR_<off>: слот `B цель+4` (СМЕЖНО с ORIG);
+//   _COLDHOOK_ADDR_<off>      : ветка на функцию-хук;
+//   _COLDHOOK_ORIG_ADDR_<off>      : слот сохранённой 1-й инструкции цели;
+//   _COLDHOOK_TRAMPOLINE_ADDR_<off>: слот `B цель+4` (СМЕЖНО с ORIG);
 //   _coldhook_orig_<fn>                        : alias, его зовёт CH_ORIG(fn).
 // .no_dead_strip держит символы при -dead_strip; смежность ORIG/TRAMPOLINE сохраняется,
 // т.к. они в одном asm-блоке и линкер не переставляет атомы без причины.
@@ -44,19 +44,19 @@
 #define CH__STUB(off, fn) \
   __asm__( \
     ".text\n.p2align 2\n" \
-    ".globl _MACHOMERGER_HOOK_COLDHOOK_ADDR_" #off "\n" \
-    ".no_dead_strip _MACHOMERGER_HOOK_COLDHOOK_ADDR_" #off "\n" \
-    "_MACHOMERGER_HOOK_COLDHOOK_ADDR_" #off ":\n    b _" #fn "\n" \
-    ".globl _MACHOMERGER_ORIG_COLDHOOK_ADDR_" #off "\n" \
-    ".no_dead_strip _MACHOMERGER_ORIG_COLDHOOK_ADDR_" #off "\n" \
-    "_MACHOMERGER_ORIG_COLDHOOK_ADDR_" #off ":\n    brk #0\n" \
-    ".globl _MACHOMERGER_HOOKTRAMPOLINE_COLDHOOK_ADDR_" #off "\n" \
-    ".no_dead_strip _MACHOMERGER_HOOKTRAMPOLINE_COLDHOOK_ADDR_" #off "\n" \
-    "_MACHOMERGER_HOOKTRAMPOLINE_COLDHOOK_ADDR_" #off ":\n    brk #0\n" \
+    ".globl _COLDHOOK_ADDR_" #off "\n" \
+    ".no_dead_strip _COLDHOOK_ADDR_" #off "\n" \
+    "_COLDHOOK_ADDR_" #off ":\n    b _" #fn "\n" \
+    ".globl _COLDHOOK_ORIG_ADDR_" #off "\n" \
+    ".no_dead_strip _COLDHOOK_ORIG_ADDR_" #off "\n" \
+    "_COLDHOOK_ORIG_ADDR_" #off ":\n    brk #0\n" \
+    ".globl _COLDHOOK_TRAMPOLINE_ADDR_" #off "\n" \
+    ".no_dead_strip _COLDHOOK_TRAMPOLINE_ADDR_" #off "\n" \
+    "_COLDHOOK_TRAMPOLINE_ADDR_" #off ":\n    brk #0\n" \
     ".globl _coldhook_orig_" #fn "\n" \
-    "_coldhook_orig_" #fn ":\n    b _MACHOMERGER_ORIG_COLDHOOK_ADDR_" #off "\n" \
+    "_coldhook_orig_" #fn ":\n    b _COLDHOOK_ORIG_ADDR_" #off "\n" \
     ".section __DATA_CONST,__const\n.p2align 3\n" \
-    "_coldhook_anchor_" #off ":\n    .quad _MACHOMERGER_HOOK_COLDHOOK_ADDR_" #off "\n" \
+    "_coldhook_anchor_" #off ":\n    .quad _COLDHOOK_ADDR_" #off "\n" \
   )
 
 // Публичный макрос: CH_HOOK_ADDR(offset, функция). Всегда detour-способен (CH_ORIG
@@ -76,21 +76,43 @@
 #define CH__STUB_SYM(sym, fn) \
   __asm__( \
     ".text\n.p2align 2\n" \
-    ".globl _MACHOMERGER_HOOK_" sym "\n" \
-    ".no_dead_strip _MACHOMERGER_HOOK_" sym "\n" \
-    "_MACHOMERGER_HOOK_" sym ":\n    b _" #fn "\n" \
-    ".globl _MACHOMERGER_ORIG_" sym "\n" \
-    ".no_dead_strip _MACHOMERGER_ORIG_" sym "\n" \
-    "_MACHOMERGER_ORIG_" sym ":\n    brk #0\n" \
-    ".globl _MACHOMERGER_HOOKTRAMPOLINE_" sym "\n" \
-    ".no_dead_strip _MACHOMERGER_HOOKTRAMPOLINE_" sym "\n" \
-    "_MACHOMERGER_HOOKTRAMPOLINE_" sym ":\n    brk #0\n" \
+    ".globl _COLDHOOK_SYM_" sym "\n" \
+    ".no_dead_strip _COLDHOOK_SYM_" sym "\n" \
+    "_COLDHOOK_SYM_" sym ":\n    b _" #fn "\n" \
+    ".globl _COLDHOOK_ORIG_SYM_" sym "\n" \
+    ".no_dead_strip _COLDHOOK_ORIG_SYM_" sym "\n" \
+    "_COLDHOOK_ORIG_SYM_" sym ":\n    brk #0\n" \
+    ".globl _COLDHOOK_TRAMPOLINE_SYM_" sym "\n" \
+    ".no_dead_strip _COLDHOOK_TRAMPOLINE_SYM_" sym "\n" \
+    "_COLDHOOK_TRAMPOLINE_SYM_" sym ":\n    brk #0\n" \
     ".globl _coldhook_orig_" #fn "\n" \
-    "_coldhook_orig_" #fn ":\n    b _MACHOMERGER_ORIG_" sym "\n" \
+    "_coldhook_orig_" #fn ":\n    b _COLDHOOK_ORIG_SYM_" sym "\n" \
     ".section __DATA_CONST,__const\n.p2align 3\n" \
-    "_coldhook_anchor_sym_" #fn ":\n    .quad _MACHOMERGER_HOOK_" sym "\n" \
+    "_coldhook_anchor_sym_" #fn ":\n    .quad _COLDHOOK_SYM_" sym "\n" \
   )
 #define CH_HOOK_SYM(sym, fn) CH__STUB_SYM(sym, fn)
+
+// Именованные shared-декларации. Поля сериализуются прямо в имени magic-экспорта;
+// используем `__` как безопасный для assembler разделитель (символ `|` inline
+// assembler не принимает). Поля не должны содержать `__`.
+#define CH_DYN_SYM(bin, sym, fn) \
+  __asm__( \
+    ".text\n.p2align 2\n" \
+    ".globl _COLDHOOK_DYN_SYM_" bin "__" sym "__" #fn "\n" \
+    ".no_dead_strip _COLDHOOK_DYN_SYM_" bin "__" sym "__" #fn "\n" \
+    "_COLDHOOK_DYN_SYM_" bin "__" sym "__" #fn ":\n    b _" #fn "\n" \
+    ".section __DATA_CONST,__const\n.p2align 3\n" \
+    "_coldhook_dyn_anchor_" #fn ":\n    .quad _COLDHOOK_DYN_SYM_" bin "__" sym "__" #fn "\n" \
+  )
+#define CH_DYN_ADDR(bin, off, fn) \
+  __asm__( \
+    ".text\n.p2align 2\n" \
+    ".globl _COLDHOOK_DYN_ADDR_" bin "__COLDHOOK_ADDR_" #off "__" #fn "\n" \
+    ".no_dead_strip _COLDHOOK_DYN_ADDR_" bin "__COLDHOOK_ADDR_" #off "__" #fn "\n" \
+    "_COLDHOOK_DYN_ADDR_" bin "__COLDHOOK_ADDR_" #off "__" #fn ":\n    b _" #fn "\n" \
+    ".section __DATA_CONST,__const\n.p2align 3\n" \
+    "_coldhook_dyn_anchor_" #fn ":\n    .quad _COLDHOOK_DYN_ADDR_" bin "__COLDHOOK_ADDR_" #off "__" #fn "\n" \
+  )
 
 // --- GATED хук: статически установлен, но рантайм-переключаемый ----------------------
 // Для Logos-групп (`%init(Group)`) и рантайм вкл/выкл: первую инструкцию цели мёрджер
@@ -110,22 +132,22 @@
     ".globl _coldhook_disp_" #fn "\n" \
     "_coldhook_disp_" #fn ":\n    .quad _coldhook_orig_" #fn "\n" \
     ".text\n.p2align 2\n" \
-    ".globl _MACHOMERGER_HOOK_" sym "\n" \
-    ".no_dead_strip _MACHOMERGER_HOOK_" sym "\n" \
-    "_MACHOMERGER_HOOK_" sym ":\n" \
+    ".globl _COLDHOOK_SYM_" sym "\n" \
+    ".no_dead_strip _COLDHOOK_SYM_" sym "\n" \
+    "_COLDHOOK_SYM_" sym ":\n" \
     "    adrp x16, _coldhook_disp_" #fn "@PAGE\n" \
     "    ldr x16, [x16, _coldhook_disp_" #fn "@PAGEOFF]\n" \
     "    br x16\n" \
-    ".globl _MACHOMERGER_ORIG_" sym "\n" \
-    ".no_dead_strip _MACHOMERGER_ORIG_" sym "\n" \
-    "_MACHOMERGER_ORIG_" sym ":\n    brk #0\n" \
-    ".globl _MACHOMERGER_HOOKTRAMPOLINE_" sym "\n" \
-    ".no_dead_strip _MACHOMERGER_HOOKTRAMPOLINE_" sym "\n" \
-    "_MACHOMERGER_HOOKTRAMPOLINE_" sym ":\n    brk #0\n" \
+    ".globl _COLDHOOK_ORIG_SYM_" sym "\n" \
+    ".no_dead_strip _COLDHOOK_ORIG_SYM_" sym "\n" \
+    "_COLDHOOK_ORIG_SYM_" sym ":\n    brk #0\n" \
+    ".globl _COLDHOOK_TRAMPOLINE_SYM_" sym "\n" \
+    ".no_dead_strip _COLDHOOK_TRAMPOLINE_SYM_" sym "\n" \
+    "_COLDHOOK_TRAMPOLINE_SYM_" sym ":\n    brk #0\n" \
     ".globl _coldhook_orig_" #fn "\n" \
-    "_coldhook_orig_" #fn ":\n    b _MACHOMERGER_ORIG_" sym "\n" \
+    "_coldhook_orig_" #fn ":\n    b _COLDHOOK_ORIG_SYM_" sym "\n" \
     ".section __DATA_CONST,__const\n.p2align 3\n" \
-    "_coldhook_anchor_gated_" #fn ":\n    .quad _MACHOMERGER_HOOK_" sym "\n" \
+    "_coldhook_anchor_gated_" #fn ":\n    .quad _COLDHOOK_SYM_" sym "\n" \
   )
 #define CH_HOOK_SYM_GATED(sym, fn) CH__STUB_SYM_GATED(sym, fn)
 
@@ -136,22 +158,22 @@
     ".globl _coldhook_disp_" #fn "\n" \
     "_coldhook_disp_" #fn ":\n    .quad _coldhook_orig_" #fn "\n" \
     ".text\n.p2align 2\n" \
-    ".globl _MACHOMERGER_HOOK_COLDHOOK_ADDR_" #off "\n" \
-    ".no_dead_strip _MACHOMERGER_HOOK_COLDHOOK_ADDR_" #off "\n" \
-    "_MACHOMERGER_HOOK_COLDHOOK_ADDR_" #off ":\n" \
+    ".globl _COLDHOOK_ADDR_" #off "\n" \
+    ".no_dead_strip _COLDHOOK_ADDR_" #off "\n" \
+    "_COLDHOOK_ADDR_" #off ":\n" \
     "    adrp x16, _coldhook_disp_" #fn "@PAGE\n" \
     "    ldr x16, [x16, _coldhook_disp_" #fn "@PAGEOFF]\n" \
     "    br x16\n" \
-    ".globl _MACHOMERGER_ORIG_COLDHOOK_ADDR_" #off "\n" \
-    ".no_dead_strip _MACHOMERGER_ORIG_COLDHOOK_ADDR_" #off "\n" \
-    "_MACHOMERGER_ORIG_COLDHOOK_ADDR_" #off ":\n    brk #0\n" \
-    ".globl _MACHOMERGER_HOOKTRAMPOLINE_COLDHOOK_ADDR_" #off "\n" \
-    ".no_dead_strip _MACHOMERGER_HOOKTRAMPOLINE_COLDHOOK_ADDR_" #off "\n" \
-    "_MACHOMERGER_HOOKTRAMPOLINE_COLDHOOK_ADDR_" #off ":\n    brk #0\n" \
+    ".globl _COLDHOOK_ORIG_ADDR_" #off "\n" \
+    ".no_dead_strip _COLDHOOK_ORIG_ADDR_" #off "\n" \
+    "_COLDHOOK_ORIG_ADDR_" #off ":\n    brk #0\n" \
+    ".globl _COLDHOOK_TRAMPOLINE_ADDR_" #off "\n" \
+    ".no_dead_strip _COLDHOOK_TRAMPOLINE_ADDR_" #off "\n" \
+    "_COLDHOOK_TRAMPOLINE_ADDR_" #off ":\n    brk #0\n" \
     ".globl _coldhook_orig_" #fn "\n" \
-    "_coldhook_orig_" #fn ":\n    b _MACHOMERGER_ORIG_COLDHOOK_ADDR_" #off "\n" \
+    "_coldhook_orig_" #fn ":\n    b _COLDHOOK_ORIG_ADDR_" #off "\n" \
     ".section __DATA_CONST,__const\n.p2align 3\n" \
-    "_coldhook_anchor_gated_" #fn ":\n    .quad _MACHOMERGER_HOOK_COLDHOOK_ADDR_" #off "\n" \
+    "_coldhook_anchor_gated_" #fn ":\n    .quad _COLDHOOK_ADDR_" #off "\n" \
   )
 #define CH_HOOK_ADDR_GATED(off, fn) CH__STUB_ADDR_GATED(off, fn)
 

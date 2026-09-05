@@ -563,7 +563,7 @@ func coldhookReencodeForSlot(_ insn: UInt32, fromAddr: UInt64, slot: UInt64) -> 
 // Generate trampolines
 // Магик-символы хука и резолв по имени — через СЫРОЙ разбор symtab (nlist_64), а НЕ через
 // SwiftMachO.getSymbolTable: тот падает (BadFormat) на symtab реальных и Swift-бинарей, из-за
-// чего магик-символы _MACHOMERGER_HOOK_* не находились и патч молча не применялся.
+// чего magic-символы `_COLDHOOK_*` не находились и патч молча не применялся.
 // Резолв имени A учитывает только DEFINED-символы (N_SECT); by-offset (_COLDHOOK_ADDR) его не требует.
 let bSymbolResolver = makeColdhookSymbolResolver(dataB.symtab)
 let aSymbolResolver = makeColdhookSymbolResolver(dataA.symtab)
@@ -601,8 +601,13 @@ if !bSyms.isEmpty {
             var data = seg.1
             data = data.subdata(in: 0..<off) + Data(fromObject: instr) + data.subdata(in: (off + 4)..<data.count)
             relocInfo.replaceSegment(name: seg.0, isB: true, data: data)
-        } else if sym.name.starts(with: "_MACHOMERGER_HOOKTRAMPOLINE_") {
-            let dstName = sym.name.replacingOccurrences(of: "_MACHOMERGER_HOOKTRAMPOLINE", with: "")
+        } else if sym.name.starts(with: "_COLDHOOK_TRAMPOLINE_SYM_") || sym.name.starts(with: "_COLDHOOK_TRAMPOLINE_ADDR_") {
+            let dstName: String
+            if sym.name.starts(with: "_COLDHOOK_TRAMPOLINE_SYM_") {
+                dstName = "_" + String(sym.name.dropFirst("_COLDHOOK_TRAMPOLINE_SYM_".count))
+            } else {
+                dstName = "_COLDHOOK_ADDR_" + String(sym.name.dropFirst("_COLDHOOK_TRAMPOLINE_ADDR_".count))
+            }
             
             var dstAddr: UInt64!
             if let d = getMagicSymbolVal(dstName) {
@@ -630,9 +635,18 @@ if !bSyms.isEmpty {
             var data = seg.1
             data = data.subdata(in: 0..<off) + Data(fromObject: instr) + data.subdata(in: (off + 4)..<data.count)
             relocInfo.replaceSegment(name: seg.0, isB: true, data: data)
-        } else if sym.name.starts(with: "_MACHOMERGER_HOOK_") {
-            let dstName = sym.name.replacingOccurrences(of: "_MACHOMERGER_HOOK", with: "")
-            let origName = "_MACHOMERGER_ORIG" + dstName
+        } else if sym.name.starts(with: "_COLDHOOK_SYM_") || sym.name.starts(with: "_COLDHOOK_ADDR_") {
+            let dstName: String
+            let origName: String
+            if sym.name.starts(with: "_COLDHOOK_SYM_") {
+                let suffix = String(sym.name.dropFirst("_COLDHOOK_SYM_".count))
+                dstName = "_" + suffix
+                origName = "_COLDHOOK_ORIG_SYM_" + suffix
+            } else {
+                let suffix = String(sym.name.dropFirst("_COLDHOOK_ADDR_".count))
+                dstName = "_COLDHOOK_ADDR_" + suffix
+                origName = "_COLDHOOK_ORIG_ADDR_" + suffix
+            }
             
             var dstAddr: UInt64!
             if let d = getMagicSymbolVal(dstName) {

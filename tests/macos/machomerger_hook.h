@@ -3,7 +3,7 @@
 
 // Магик-символы MachOMerger. Имя должно совпадать с символом цели БЕЗ ведущего
 // подчёркивания: C-функция domain_for имеет символ _domain_for -> HOOK(domain_for).
-#define HOOK(name) MACHOMERGER_HOOK_##name
-#define ORIG(name) MACHOMERGER_ORIG_##name
+#define HOOK(name) COLDHOOK_SYM_##name
+#define ORIG(name) COLDHOOK_ORIG_SYM_##name
 
 #endif

@@ -16,10 +16,10 @@
 .text
 .p2align 2
 
-.globl _MACHOMERGER_ORIG_domain_for
-_MACHOMERGER_ORIG_domain_for:
+.globl _COLDHOOK_ORIG_SYM_domain_for
+_COLDHOOK_ORIG_SYM_domain_for:
     brk     #0
 
-.globl _MACHOMERGER_HOOKTRAMPOLINE_domain_for
-_MACHOMERGER_HOOKTRAMPOLINE_domain_for:
+.globl _COLDHOOK_TRAMPOLINE_SYM_domain_for
+_COLDHOOK_TRAMPOLINE_SYM_domain_for:
     brk     #0
