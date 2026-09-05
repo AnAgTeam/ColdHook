@@ -305,6 +305,19 @@ if coldhookModeArg == "shared" {
                 if type == UInt32(LC_DYLD_CHAINED_FIXUPS) || type == UInt32(LC_DYLD_EXPORTS_TRIE) ||
                    type == UInt32(LC_FUNCTION_STARTS) || type == UInt32(LC_DATA_IN_CODE) { shift(8) }
                 if type == UInt32(LC_SYMTAB) { shift(8); shift(16) }
+                // LC_DYSYMTAB contains file offsets into __LINKEDIT as well.
+                // Shared mode keeps the target's existing symbol/indirect tables
+                // verbatim, so every offset field must follow the relocated
+                // __LINKEDIT.  The first four fields are symbol indexes/counts;
+                // only the *_off fields below are file offsets.
+                if type == UInt32(LC_DYSYMTAB) {
+                    shift(32) // tocoff
+                    shift(40) // modtaboff
+                    shift(48) // extrefsymoff
+                    shift(56) // indirectsymoff
+                    shift(64) // extreloff
+                    shift(72) // locreloff
+                }
                 nonSegmentCommands.append(patched); ncmds += 1
             }
             pos += size
