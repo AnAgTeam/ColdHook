@@ -9,7 +9,8 @@ func_pat = re.compile(r'(?P<prefix>(?:public\s+|internal\s+|private\s+|filepriva
 found = []
 for p in sorted(src.rglob('*.swift')):
     text = p.read_text()
-    for match in re.finditer(pat.pattern + r'\s*(?:public\s+|internal\s+|private\s+|fileprivate\s+)?func\s+([A-Za-z_][A-Za-z0-9_]*)', text):
+    for match in re.finditer(pat.pattern + r'\s*(?:(?:@[A-Za-z_][A-Za-z0-9_]*(?:\([^\n]*\))?)\s*)*'
+                            r'(?:public\s+|internal\s+|private\s+|fileprivate\s+)?func\s+([A-Za-z_][A-Za-z0-9_]*)', text):
         found.append((match.group(1), match.group(2), match.group(3)))
     dst = out / p.relative_to(src)
     dst.parent.mkdir(parents=True, exist_ok=True)
