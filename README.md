@@ -39,6 +39,10 @@ cd ../..
 
 Python-зависимости для CLI устанавливаются стандартным способом проекта. Для Theos-шаблонов отдельно выполни `python3 -m coldhook install-theos`.
 
+### Windows
+
+Windows поддерживает офлайн-патчинг уже собранных артефактов: скачай `MachOMerger.exe`, hook dylib и runtime из релиза, затем запусти тот же Python CLI. IPA распаковывается и запаковывается встроенным `zipfile`, поэтому `unzip`/`zip` не нужны. Сборка hook-кода, Theos и подпись остаются macOS-зависимыми.
+
 ### Использование
 
 Одиночный merge:
@@ -114,8 +118,10 @@ __attribute__((constructor)) static void init(void) {
 
 ```bash
 python3 -m coldhook install-theos
-nic.pl
+$THEOS/bin/nic.pl
 ```
+
+В меню выбери `iphone/coldhook_tweak` для Logos/Objective-C или `iphone/coldhook_tweak_swift` для Swift. После создания проекта обычные `make`/`make package` остаются Theos-командами.
 
 В `Tweak.x` можно использовать привычный Logos:
 
@@ -169,7 +175,7 @@ public func url(for domain: String) -> String {
 }
 ```
 
-Готовый Theos-шаблон Swift устанавливается той же командой `install-theos`. Glue-код и экспортные объявления генерируются автоматически.
+Готовый Theos-шаблон Swift устанавливается той же командой `install-theos`, после чего запускается `$THEOS/bin/nic.pl` с выбором `iphone/coldhook_tweak_swift`. Glue-код и экспортные объявления генерируются автоматически.
 
 ## Тестовое приложение
 
