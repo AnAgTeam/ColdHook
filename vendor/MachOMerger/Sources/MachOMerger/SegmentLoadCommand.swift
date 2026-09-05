@@ -8,7 +8,10 @@
 import Foundation
 import MachO
 
-func generateSegmentLoadCommands(infoA: MachOMergeData, infoB: MachOMergeData, relocInfo: RelocInfo) -> (Int, Data) {
+func generateSegmentLoadCommands(infoA: MachOMergeData, infoB: MachOMergeData, relocInfo: RelocInfo,
+                                 extraSections: [String: [section_64]] = [:],
+                                 segmentGrowth: [String: (vmSize: UInt64, fileSize: UInt64)] = [:],
+                                 reserveHeader: Bool = true) -> (Int, Data) {
     var result = Data()
     // ColdHook: «заголовочный» сегмент (туда резервируется 0x4000 под mach header) — первый
     // НЕ-__PAGEZERO. Для dylib это index 0; для исполняемого — index 1 (после __PAGEZERO).
@@ -23,6 +26,7 @@ func generateSegmentLoadCommands(infoA: MachOMergeData, infoB: MachOMergeData, r
         if seg.1.count > 1 {
             sects += seg.1[1].origCommand.sections.count
         }
+        sects += extraSections[seg.0]?.count ?? 0
 
         var slc = segment_command_64()
         slc.cmd = UInt32(LC_SEGMENT_64)
@@ -39,7 +43,7 @@ func generateSegmentLoadCommands(infoA: MachOMergeData, infoB: MachOMergeData, r
             slc.filesize = seg.1[0].origCommand.fileSize
             slc.maxprot = Int32(bitPattern: seg.1[0].origCommand.maximumProt.rawValue)
             slc.initprot = Int32(bitPattern: seg.1[0].origCommand.protection.rawValue)
-        } else if i == headerIdx {
+        } else if reserveHeader && i == headerIdx {
             // base &- 0x4000: для dylib даёт 0, для исполняемого — образную базу (0x100000000).
             slc.vmaddr = base &- 0x4000
             if seg.1.count == 1 {
@@ -66,6 +70,13 @@ func generateSegmentLoadCommands(infoA: MachOMergeData, infoB: MachOMergeData, r
             slc.fileoff = seg.1[0].origCommand.fileOffset + seg.1[0].offset
             slc.maxprot = Int32(bitPattern: seg.1[0].origCommand.maximumProt.rawValue)
             slc.initprot = Int32(bitPattern: seg.1[0].origCommand.protection.rawValue)
+        }
+
+        // Shared backend appends synthetic payload to an existing A segment.  Keep
+        // the default zero-growth path byte-for-byte compatible with embedded modes.
+        if let growth = segmentGrowth[seg.0] {
+            slc.vmsize += growth.vmSize
+            slc.filesize += growth.fileSize
         }
         
         slc.nsects = UInt32(sects)
@@ -147,6 +158,13 @@ func generateSegmentLoadCommands(infoA: MachOMergeData, infoB: MachOMergeData, r
 
                 sectsData.appendGeneric(value: sectLC)
             }
+        }
+
+        // Shared backend supplies synthetic sections after the original A/B sections.
+        // Their payload and addresses are planned separately; this function only emits
+        // their section_64 descriptors into the segment load command.
+        if let extras = extraSections[seg.0] {
+            for section in extras { sectsData.appendGeneric(value: section) }
         }
         
         result.appendGeneric(value: slc)
