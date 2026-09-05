@@ -9,13 +9,13 @@ COLDHOOK = @@COLDHOOK@@
 COLDHOOK_RUNTIME_DIR ?= $(THEOS_PROJECT_DIR)
 
 # Shared backend: the same dylib may be applied to every Mach-O in the bundle.
-_CHRC := $(shell mkdir -p .coldhook && python3 $(COLDHOOK)/coldhook/logos_prepass.py --strip-only Tweak.x 1> .coldhook/Tweak.xm; echo $$?)
+_CHRC := $(shell mkdir -p .coldhook && coldhook-logos --strip-only Tweak.x 1> .coldhook/Tweak.xm; echo $$?)
 ifneq ($(_CHRC),0)
 $(error ColdHook shared prepass failed)
 endif
 
-@@PROJECTNAME@@_FILES = .coldhook/Tweak.xm $(COLDHOOK)/coldhook/substrate/substrate.m $(COLDHOOK)/coldhook/substrate/coldhook_objc.m
-@@PROJECTNAME@@_CFLAGS = -fobjc-arc -I$(COLDHOOK)/coldhook/include -I$(COLDHOOK)/coldhook/substrate
+@@PROJECTNAME@@_FILES = .coldhook/Tweak.xm substrate.m coldhook_objc.m
+@@PROJECTNAME@@_CFLAGS = -fobjc-arc -Iinclude -Iinclude/CydiaSubstrate
 @@PROJECTNAME@@_LDFLAGS = -Wl,-no_warn_inits -Wl,-fixup_chains -Xlinker -add_split_seg_info \
     -Wl,-not_for_dyld_shared_cache \
     -L$(COLDHOOK_RUNTIME_DIR) -lcoldhook -Wl,-rpath,$(COLDHOOK_RUNTIME_DIR)

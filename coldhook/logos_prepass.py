@@ -285,7 +285,9 @@ def prepass(text):
     return out
 
 
-def main(argv):
+def main(argv=None):
+    if argv is None:
+        argv = sys.argv[1:]
     if not argv or argv[0] in ("-h", "--help"):
         print("usage: coldhook-logos [--strip-only] <input.x> [logos args...]\n"
               "  по умолчанию: prepass (%hookf -> статика) + сток logos.pl -> ObjC++ в stdout\n"

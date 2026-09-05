@@ -1,0 +1,14 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "coldhook"
+version = "0.1.0"
+description = "ColdHook static Mach-O hook tooling"
+
+[project.scripts]
+coldhook-logos = "coldhook.logos_prepass:main"
+
+[tool.setuptools]
+packages = ["coldhook"]

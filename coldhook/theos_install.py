@@ -28,18 +28,26 @@ def build_nic(template_dir: str, name: str, coldhook_root: str) -> str:
     # Заголовок 'nic 1' -> nic.pl грузит формат NIC::Formats::NIC1 (текстовый). Версия должна
     # быть \w+ без точки (иначе регекс _loadNIC не матчит и файл уходит в NICTar -> не парсится).
     out = ['nic 1', f'name "{name}"']
-    for rel in sorted(os.listdir(template_dir)):
+    files = []
+    for base, _, names in os.walk(template_dir):
+        for filename in names:
+            path = os.path.join(base, filename)
+            files.append(os.path.relpath(path, template_dir))
+    dirs = sorted({os.path.dirname(rel) for rel in files if os.path.dirname(rel)})
+    for directory in dirs:
+        out.append(f"dir {directory}")
+    for rel in sorted(files):
         path = os.path.join(template_dir, rel)
-        if not os.path.isfile(path):
-            continue
         with open(path) as f:
             content = f.read()
         content = content.replace("@@COLDHOOK@@", coldhook_root)
-        if not content.endswith("\n"):
-            content += "\n"
-        nlines = content.count("\n")
+        # NIC1 consumes an exact number of physical lines. Keep the count in
+        # sync with the normalized payload; otherwise a trailing blank line
+        # can swallow the next `file` header.
+        content = content.rstrip("\n")
+        nlines = len(content.splitlines())
         out.append(f"file {nlines} {rel}")
-        out.append(content.rstrip("\n"))   # join добавит \n между строками блока
+        out.append(content)
     return "\n".join(out) + "\n"
 
 
@@ -63,5 +71,5 @@ def cmd_install_theos(args) -> int:
     print("Шаблоны установлены:")
     for d in dests:
         print(f"  {d}")
-    print("Теперь: nic.pl  ->  «iphone/coldhook_tweak»  ->  make")
+    print("Теперь: nic.pl  ->  «iphone/coldhook_tweak» / «iphone/coldhook_tweak_swift»  ->  make")
     return 0
