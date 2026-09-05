@@ -164,8 +164,27 @@ func planColdhookSharedTarget(
 
     // Each hook owns twelve bytes of local veneer and eight bytes of orig code.
     let initialMetadata = emitColdhookSharedMetadata(declarations)
-    let appendVMEnd = targetData.segments.map { $0.0.vmAddr + $0.0.vmSize }.max() ?? (text.vmAddr + text.vmSize)
-    let appendFileEnd = targetData.segments.map { $0.0.fileOffset + $0.0.fileSize }.max() ?? (data.fileOffset + data.fileSize)
+    // Some compiler-produced segments (notably __LLVM_COV in Swift
+    // frameworks) advertise zero/short segment file sizes while their
+    // sections still occupy bytes. Include section extents or the synthetic
+    // stub can be placed on top of an existing section.
+    var appendVMEnd = text.vmAddr + text.vmSize
+    var appendFileEnd = data.fileOffset + data.fileSize
+    for (segment, _) in targetData.segments {
+        var segmentVMEnd = segment.vmAddr + segment.vmSize
+        for section in segment.sections {
+            segmentVMEnd = max(segmentVMEnd, section.address + UInt64(section.size))
+        }
+        appendVMEnd = max(appendVMEnd, segmentVMEnd)
+        var segmentFileEnd = segment.fileOffset + segment.fileSize
+        for section in segment.sections where section.offset != 0 {
+            segmentFileEnd = max(segmentFileEnd, UInt64(section.offset) + UInt64(section.size))
+        }
+        appendFileEnd = max(appendFileEnd, segmentFileEnd)
+    }
+    // Keep one page of slack for section payloads represented only in the
+    // original load commands (Swift coverage sections are one example).
+    appendFileEnd += 0x4000
     let layout = try planColdhookSharedLayout(
         executableVMEnd: appendVMEnd,
         executableFileEnd: appendFileEnd,

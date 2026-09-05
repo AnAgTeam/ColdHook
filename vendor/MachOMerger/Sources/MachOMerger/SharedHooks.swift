@@ -17,8 +17,13 @@ enum ColdhookSharedHookError: Error, CustomStringConvertible {
 func coldhookBinarySelectors(path: String) -> Set<String> {
     let filename = URL(fileURLWithPath: path).lastPathComponent
     var result: Set<String> = [filename]
-    if let dot = filename.firstIndex(of: "."), dot != filename.startIndex {
-        result.insert(String(filename[..<dot]))
+    // Also accept a bundle-relative selector, e.g.
+    // Frameworks/TestFramework.framework/TestFramework.  This disambiguates
+    // equal basenames in nested frameworks while remaining stable for IPA
+    // extraction into a temporary directory.
+    let normalized = URL(fileURLWithPath: path).standardizedFileURL.path
+    if let appRange = normalized.range(of: ".app/") {
+        result.insert(String(normalized[appRange.upperBound...]))
     }
     return result
 }

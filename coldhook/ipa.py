@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import glob
 import os
+import pathlib
 import shutil
 import subprocess
 import tempfile
@@ -33,6 +34,55 @@ def _shared_hook_descriptions(dylib: str) -> list[str]:
         if len(fields) >= 3:
             result.append(f"{fields[0]}:{fields[1]}")
     return list(dict.fromkeys(result))
+
+
+def _shared_hook_selectors(dylib: str) -> set[str]:
+    return {item.split(":", 1)[0] for item in _shared_hook_descriptions(dylib)
+            if ":" in item}
+
+
+def _validate_shared_selectors(app: str, dylib: str) -> None:
+    """Reject a selector that resolves to more than one Mach-O image.
+
+    A basename is convenient for normal bundles, but becomes ambiguous when
+    two embedded frameworks contain equally named binaries.  In that case the
+    macro may use a bundle-relative path (or an absolute path) instead.
+    """
+    selectors = _shared_hook_selectors(dylib)
+    if not selectors:
+        return
+    images: list[str] = []
+    seen_real: set[str] = set()
+    for root, _, files in os.walk(app):
+        for name in files:
+            path = os.path.join(root, name)
+            try:
+                build.macho.inspect(path)
+            except Exception:
+                continue
+            real = os.path.realpath(path)
+            if real in seen_real:
+                continue
+            seen_real.add(real)
+            images.append(path)
+    for selector in selectors:
+        matches = []
+        for path in images:
+            rel = os.path.relpath(path, app)
+            base = os.path.basename(path)
+            if selector.startswith("/"):
+                hit = os.path.abspath(path) == os.path.abspath(selector)
+            elif "/" in selector:
+                hit = rel == selector or rel.endswith("/" + selector)
+            else:
+                hit = selector == base
+            if hit:
+                matches.append(rel)
+        if len(matches) > 1:
+            raise PatchError(
+                "shared: неоднозначный binary selector "
+                f"{selector!r}; совпали: {', '.join(matches)}. "
+                "Укажи bundle-relative или абсолютный путь в макросе.")
 
 
 def _run(cmd: list[str], what: str, cwd: str | None = None) -> None:
@@ -99,7 +149,7 @@ def patch_bundle(inp: str, config: Config, out: str, do_sign: bool = False) -> s
 
 def patch_shared_bundle(inp: str, dylib: str, out: str, do_sign: bool = False,
                         import_path: str | None = None, runtime: str | None = None,
-                        verbose: bool = False) -> str:
+                        verbose: bool = False, skip_unsupported: bool = False) -> str:
     """Apply one shared hook dylib to every Mach-O in an app bundle.
 
     File discovery is deliberately dumb: every regular file is probed, and the
@@ -127,6 +177,7 @@ def patch_shared_bundle(inp: str, dylib: str, out: str, do_sign: bool = False,
             stage = os.path.join(work, os.path.basename(inp))
             shutil.copytree(inp, stage, symlinks=True)
         app = _find_app(stage)
+        _validate_shared_selectors(app, dylib)
         hook_descriptions = _shared_hook_descriptions(dylib) if verbose else []
         if verbose:
             for description in hook_descriptions:
@@ -144,9 +195,26 @@ def patch_shared_bundle(inp: str, dylib: str, out: str, do_sign: bool = False,
         shutil.copy2(runtime, runtime_dest)
         dylib_real = os.path.realpath(dylib)
         patched = 0
+        seen_targets: set[str] = set()
         for root, _, files in os.walk(stage):
             for name in files:
                 target = os.path.join(root, name)
+                # Test bundles and dSYM payloads are not application images;
+                # build-for-testing places FAT test artifacts next to the app.
+                path_parts = pathlib.Path(target).parts
+                framework_name = next((p for p in reversed(path_parts) if p.endswith(".framework")), "")
+                is_xctest_support = (
+                    name.startswith(("libXCTest", "XCTest", "XCT"))
+                    or framework_name.startswith(("XCTest", "XC", "XCT", "Testing"))
+                    or "XCUnit.framework" in target
+                )
+                if (".xctest" in target or ".dSYM" in target or "/PlugIns/" in target
+                        or is_xctest_support):
+                    continue
+                target_real = os.path.realpath(target)
+                if target_real in seen_targets:
+                    continue
+                seen_targets.add(target_real)
                 if (os.path.realpath(target) == dylib_real
                         or (bundled_dylib and os.path.realpath(target) == os.path.realpath(bundled_dylib))
                         or os.path.realpath(target) == os.path.realpath(runtime_dest)):
@@ -159,9 +227,14 @@ def patch_shared_bundle(inp: str, dylib: str, out: str, do_sign: bool = False,
                 before = open(target, "rb").read() if verbose else None
                 try:
                     build.toolchain.merge(target, dylib, merged, mode="shared", import_path=import_path)
-                except Exception:
+                except Exception as exc:
                     if os.path.exists(merged):
                         os.remove(merged)
+                    if skip_unsupported and any(marker in str(exc) for marker in
+                                                ("FatNotMachO", "Unsupported", "not a Mach-O")):
+                        if verbose:
+                            print(f"skip unsupported {os.path.relpath(target, app)}: {exc}")
+                        continue
                     raise
                 shutil.copymode(target, merged)
                 shutil.move(merged, target)

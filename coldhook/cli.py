@@ -64,7 +64,8 @@ def cmd_shared(args) -> int:
                                         do_sign=args.sign_bundle,
                                         import_path=args.import_path,
                                         runtime=args.runtime,
-                                        verbose=args.verbose) else 1
+                                        verbose=args.verbose,
+                                        skip_unsupported=args.skip_unsupported) else 1
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -110,6 +111,8 @@ def build_parser() -> argparse.ArgumentParser:
     ps.add_argument("--runtime", help="libcoldhook.dylib для помещения в Frameworks (по умолчанию рядом с hook)")
     ps.add_argument("--import-path", help="путь загрузки hook dylib (по умолчанию @executable_path/Frameworks/<name>)")
     ps.add_argument("--verbose", action="store_true", help="печатать обработанные бинарники")
+    ps.add_argument("--skip-unsupported", action="store_true",
+                    help="пропускать неподдерживаемые служебные Mach-O (например FAT XCTest)")
     ps.add_argument("--out", "-o", required=True, help="выходной .app-каталог")
     ps.add_argument("--sign-bundle", action="store_true",
                     help="подписать каждый обработанный Mach-O через ad-hoc codesign")

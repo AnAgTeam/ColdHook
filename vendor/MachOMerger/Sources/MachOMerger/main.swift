@@ -42,12 +42,12 @@ var coldhookPosArgs: [String] = []
 var coldhookSkipNext = false
 for arg in CommandLine.arguments.dropFirst() {
     if coldhookSkipNext { coldhookSkipNext = false; continue }   // значение --mode <val>
-    if arg == "--mode" { coldhookSkipNext = true; continue }
+    if arg == "--mode" || arg == "--import-path" { coldhookSkipNext = true; continue }
     if arg.hasPrefix("--") { continue }                         // прочие флаги (--allow-new-dylibs)
     coldhookPosArgs.append(arg)
 }
 guard coldhookPosArgs.count == 3 else {
-    print("Usage: MachOMerger <a> <b> <out> [--allow-new-dylibs] [--mode auto|append|interleave|shared]")
+    print("Usage: MachOMerger <a> <b> <out> [--allow-new-dylibs] [--mode auto|append|interleave|shared] [--import-path PATH]")
     exit(-1)
 }
 
@@ -163,6 +163,11 @@ func collectData(fromMachO machO: MachO) -> MachOMergeData {
             // ColdHook: LC_LOAD_DYLINKER (исполняемый грузит /usr/lib/dyld) — сохранить вербатим.
             // LC_RPATH (@executable_path/Frameworks и т.п.) — только строка пути, релоцировать
             // нечего, сохраняем как есть, иначе приложение не найдёт свои фреймворки.
+            result.otherCommands.append(cmd)
+        } else if cmdNum == LC_DYLD_INFO || cmdNum == LC_DYLD_INFO_ONLY {
+            // Classic dyld info is still emitted by simulator binaries.
+            // Its five offset fields point into __LINKEDIT and are relocated
+            // when shared mode moves that segment.
             result.otherCommands.append(cmd)
         } else if cmdNum == LC_CODE_SIGNATURE || cmdNum == LC_ENCRYPTION_INFO_64 {
         } else {
@@ -309,6 +314,21 @@ if coldhookModeArg == "shared" {
                 if name == "__LINKEDIT" { pos += size; continue }
                 pos += size; continue
             }
+            if type == UInt32(LC_RPATH) {
+                // build-for-testing injects a runpath into BUILT_PRODUCTS_DIR;
+                // retaining it makes dyld load the unpatched framework beside
+                // the build products instead of the copy embedded in the app.
+                let pathOffset = Int(raw.getGeneric(type: UInt32.self, offset: 8))
+                if pathOffset >= 0 && pathOffset < raw.count {
+                    let bytes = raw[pathOffset..<raw.count]
+                    let end = bytes.firstIndex(of: 0) ?? raw.count
+                    let path = String(decoding: raw[pathOffset..<end], as: UTF8.self)
+                    if path.contains("Build/Products") {
+                        pos += size
+                        continue
+                    }
+                }
+            }
             if type != UInt32(LC_CODE_SIGNATURE) && type != UInt32(LC_SEGMENT_SPLIT_INFO) {
                 var patched = raw
                 func shift(_ at: Int) {
@@ -319,6 +339,9 @@ if coldhookModeArg == "shared" {
                 }
                 if type == UInt32(LC_DYLD_CHAINED_FIXUPS) || type == UInt32(LC_DYLD_EXPORTS_TRIE) ||
                    type == UInt32(LC_FUNCTION_STARTS) || type == UInt32(LC_DATA_IN_CODE) { shift(8) }
+                if type == UInt32(LC_DYLD_INFO) || type == UInt32(LC_DYLD_INFO_ONLY) {
+                    shift(8); shift(16); shift(24); shift(32); shift(40)
+                }
                 if type == UInt32(LC_SYMTAB) { shift(8); shift(16) }
                 // LC_DYSYMTAB contains file offsets into __LINKEDIT as well.
                 // Shared mode keeps the target's existing symbol/indirect tables
@@ -340,8 +363,16 @@ if coldhookModeArg == "shared" {
         var linkeditLC = segment_command_64(); linkeditLC.cmd = UInt32(LC_SEGMENT_64)
         linkeditLC.cmdsize = UInt32(MemoryLayout<segment_command_64>.size)
         _ = withUnsafeMutableBytes(of: &linkeditLC.segname) { strcpy($0.baseAddress!, "__LINKEDIT") }
-        let vmEnd = assembly.targetData.segments.map { $0.0.vmAddr + $0.0.vmSize }.max() ?? 0
-        linkeditLC.vmaddr = max(coldhookBase + UInt64(linkeditOff), (vmEnd + 0x3fff) & ~0x3fff)
+		let vmEnd = assembly.targetData.segments.map { $0.0.vmAddr + $0.0.vmSize }.max() ?? 0
+		// The newly synthesized segments are not part of targetData.segments.
+		// Include their reserved VM ranges before placing __LINKEDIT; otherwise
+		// dylibs/frameworks whose original __LINKEDIT ends at the next page get
+		// an overlapping __LINKEDIT and __COLDHOOK_DATA.
+		let coldhookVMEnd = max(
+			assembly.plan.layout.stubVMAddr + ((assembly.plan.layout.stubSize + 0x3fff) & ~0x3fff),
+			assembly.plan.layout.tableVMAddr + ((assembly.plan.layout.tableSize + 0x3fff) & ~0x3fff))
+		let allVMEnd = max(vmEnd, coldhookVMEnd)
+		linkeditLC.vmaddr = max(coldhookBase + UInt64(linkeditOff), (allVMEnd + 0x3fff) & ~0x3fff)
         linkeditLC.vmsize = UInt64((linkeditBytes.count + 0x3fff) & ~0x3fff)
         linkeditLC.fileoff = UInt64(linkeditOff); linkeditLC.filesize = UInt64(linkeditBytes.count)
         linkeditLC.maxprot = VM_PROT_READ; linkeditLC.initprot = VM_PROT_READ
