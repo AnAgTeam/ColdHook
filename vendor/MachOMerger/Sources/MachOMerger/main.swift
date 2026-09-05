@@ -32,6 +32,7 @@ func coldhookFlagValue(_ name: String) -> String? {
     return nil
 }
 let coldhookModeArg = (coldhookFlagValue("--mode") ?? "auto").lowercased()
+let coldhookImportPath = coldhookFlagValue("--import-path")
 guard ["auto", "append", "interleave", "shared"].contains(coldhookModeArg) else {
     print("Unknown --mode '\(coldhookModeArg)'. Use: auto | append | interleave | shared")
     exit(-1)
@@ -242,7 +243,7 @@ if coldhookModeArg == "shared" {
                 let end = pathBytes.firstIndex(of: 0) ?? pathBytes.count
                 let fileName = String(bytes: pathBytes[..<end], encoding: .utf8) ?? "libcoldhook.dylib"
                 let baseName = (fileName as NSString).lastPathComponent
-                let bundledPath = "@executable_path/Frameworks/\(baseName)"
+                let bundledPath = coldhookImportPath ?? "@executable_path/Frameworks/\(baseName)"
                 var encoded = Array(bundledPath.utf8) + [0]
                 let capacity = size - 24
                 if encoded.count <= capacity {

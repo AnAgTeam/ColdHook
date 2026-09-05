@@ -79,7 +79,8 @@ def patch_bundle(inp: str, config: Config, out: str, do_sign: bool = False) -> s
     return out
 
 
-def patch_shared_bundle(inp: str, dylib: str, out: str, do_sign: bool = False) -> str:
+def patch_shared_bundle(inp: str, dylib: str, out: str, do_sign: bool = False,
+                        import_path: str | None = None, verbose: bool = False) -> str:
     """Apply one shared hook dylib to every Mach-O in an app bundle.
 
     File discovery is deliberately dumb: every regular file is probed, and the
@@ -103,16 +104,18 @@ def patch_shared_bundle(inp: str, dylib: str, out: str, do_sign: bool = False) -
         app = _find_app(stage)
         # Shared sideload bundles carry the hook runtime with the app.  The
         # merger rewrites LC_LOAD_DYLIB to @executable_path/Frameworks/<name>.
-        frameworks = os.path.join(app, "Frameworks")
-        os.makedirs(frameworks, exist_ok=True)
-        bundled_dylib = os.path.join(frameworks, os.path.basename(dylib))
-        shutil.copy2(dylib, bundled_dylib)
+        bundled_dylib = None
+        if import_path is None:
+            frameworks = os.path.join(app, "Frameworks")
+            os.makedirs(frameworks, exist_ok=True)
+            bundled_dylib = os.path.join(frameworks, os.path.basename(dylib))
+            shutil.copy2(dylib, bundled_dylib)
         dylib_real = os.path.realpath(dylib)
         patched = 0
         for root, _, files in os.walk(stage):
             for name in files:
                 target = os.path.join(root, name)
-                if os.path.realpath(target) in (dylib_real, os.path.realpath(bundled_dylib)):
+                if os.path.realpath(target) == dylib_real or (bundled_dylib and os.path.realpath(target) == os.path.realpath(bundled_dylib)):
                     continue
                 try:
                     build.macho.inspect(target)
@@ -120,7 +123,7 @@ def patch_shared_bundle(inp: str, dylib: str, out: str, do_sign: bool = False) -
                     continue
                 merged = target + ".coldhook"
                 try:
-                    build.toolchain.merge(target, dylib, merged, mode="shared")
+                    build.toolchain.merge(target, dylib, merged, mode="shared", import_path=import_path)
                 except Exception:
                     if os.path.exists(merged):
                         os.remove(merged)
@@ -130,6 +133,8 @@ def patch_shared_bundle(inp: str, dylib: str, out: str, do_sign: bool = False) -
                 if do_sign:
                     build.toolchain.sign(target)
                 patched += 1
+                if verbose:
+                    print(f"will add {os.path.relpath(target, app)}")
         if is_ipa:
             print(f"{C_CYAN}== запаковка IPA: {os.path.basename(out)}{C_RST}")
             out_abs = os.path.abspath(out)
