@@ -250,6 +250,18 @@ if coldhookModeArg == "shared" {
             userHooksResolver: makeColdhookSymbolResolver(dataB.symtab))
         let (segmentCount, segmentBytes) = generateColdhookSharedSegmentLoadCommands(assembly)
         let aFile = a.data
+        guard let linkeditCommand = a.cmds.compactMap({ $0 as? Segment64LoadCommand }).first(where: { $0.name == "__LINKEDIT" }),
+              let linkeditData = dataA.linkedit else {
+            throw ColdhookSharedAssemblerError.missingSegment("__LINKEDIT")
+        }
+        let oldLinkeditOff = Int(linkeditCommand.fileOffset)
+        let oldLinkeditEnd = oldLinkeditOff + Int(linkeditCommand.fileSize)
+        let linkeditBytes = linkeditData
+        let materializedEnd = assembly.targetData.segments.map { Int($0.0.fileOffset) + $0.1.count }.max() ?? aFile.count
+        let payloadEnd = max(Int(assembly.plan.layout.stubFileOffset + assembly.plan.layout.stubSize),
+                             Int(assembly.plan.layout.tableFileOffset + assembly.plan.layout.tableSize))
+        let targetFileEnd = max(materializedEnd, payloadEnd)
+        let linkeditOff = (max(targetFileEnd, aFile.count) + 0x3fff) & ~0x3fff
         let oldCount = Int(aFile.getGeneric(type: UInt32.self, offset: 0x10))
         var commands = Data(); var ncmds = 0
         var pos = 0x20
@@ -260,13 +272,33 @@ if coldhookModeArg == "shared" {
             if type == UInt32(LC_SEGMENT_64) {
                 var nameBytes = [UInt8](raw.subdata(in: 8..<24)); nameBytes.append(0)
                 let name = String(cString: nameBytes)
-                if name != "__LINKEDIT" { pos += size; continue }
+                if name == "__LINKEDIT" { pos += size; continue }
+                pos += size; continue
             }
             if type != UInt32(LC_CODE_SIGNATURE) {
-                commands.append(raw); ncmds += 1
+                var patched = raw
+                func shift(_ at: Int) {
+                    let value = patched.getGeneric(type: UInt32.self, offset: UInt(at))
+                    if Int(value) >= oldLinkeditOff && Int(value) < oldLinkeditEnd {
+                        patched.replaceSubrange(at..<(at + 4), with: Data(fromObject: UInt32(Int(value) + linkeditOff - oldLinkeditOff)))
+                    }
+                }
+                if type == UInt32(LC_DYLD_CHAINED_FIXUPS) || type == UInt32(LC_DYLD_EXPORTS_TRIE) ||
+                   type == UInt32(LC_FUNCTION_STARTS) || type == UInt32(LC_DATA_IN_CODE) { shift(8) }
+                if type == UInt32(LC_SYMTAB) { shift(8); shift(16) }
+                commands.append(patched); ncmds += 1
             }
             pos += size
         }
+        var linkeditLC = segment_command_64(); linkeditLC.cmd = UInt32(LC_SEGMENT_64)
+        linkeditLC.cmdsize = UInt32(MemoryLayout<segment_command_64>.size)
+        _ = withUnsafeMutableBytes(of: &linkeditLC.segname) { strcpy($0.baseAddress!, "__LINKEDIT") }
+        let vmEnd = assembly.targetData.segments.map { $0.0.vmAddr + $0.0.vmSize }.max() ?? 0
+        linkeditLC.vmaddr = max(coldhookBase + UInt64(linkeditOff), (vmEnd + 0x3fff) & ~0x3fff)
+        linkeditLC.vmsize = UInt64((linkeditBytes.count + 0x3fff) & ~0x3fff)
+        linkeditLC.fileoff = UInt64(linkeditOff); linkeditLC.filesize = UInt64(linkeditBytes.count)
+        linkeditLC.maxprot = VM_PROT_READ; linkeditLC.initprot = VM_PROT_READ
+        commands.append(Data(fromObject: linkeditLC)); ncmds += 1
         commands.append(segmentBytes); ncmds += segmentCount
         if let dylib = sharedDylibCommand(from: b) { commands.append(dylib); ncmds += 1 }
         var header = mach_header_64(); header.magic = MH_MAGIC_64; header.cputype = CPU_TYPE_ARM64
@@ -284,6 +316,8 @@ if coldhookModeArg == "shared" {
             if output.count < end { output.append(Data(repeating: 0, count: end - output.count)) }
             output.replaceSubrange(off..<end, with: bytes)
         }
+        if output.count < linkeditOff { output.append(Data(repeating: 0, count: linkeditOff - output.count)) }
+        output.append(linkeditBytes)
         // __TEXT's segment bytes include the old header; install the new header last.
         output.replaceSubrange(0..<limit, with: headerData + Data(repeating: 0, count: limit - headerData.count))
         try output.write(to: URL(fileURLWithPath: coldhookPosArgs[2]))
@@ -708,7 +742,14 @@ coldhookMergeInitOffsets()
 // (между концом LC и первой секцией). Единственный путь для реальных бинарей (они без split-info).
 // Стратегия размещения изолирована в этой функции: при нехватке padding — внятная ошибка, точка
 // под запасные варианты (отдельный хвостовой сегмент / shared-режим: хук по либе с бОльшим запасом).
-func coldhookAppendAssemble() -> Data {
+func coldhookAppendAssemble(targetDataInput: MachOMergeData = dataA,
+                            hookDataInput: MachOMergeData = dataB,
+                            relocInfoInput: RelocInfo = relocInfo) -> Data {
+    // Keep the historical implementation intact while allowing shared mode to
+    // reuse its header/segment/__LINKEDIT rebuild path.
+    let dataA = targetDataInput
+    let dataB = hookDataInput
+    let relocInfo = relocInfoInput
     let aFile = a.data
     let ncmdsA = aFile.getGeneric(type: UInt32.self, offset: 0x10)
 

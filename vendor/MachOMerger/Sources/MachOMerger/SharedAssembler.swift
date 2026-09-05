@@ -125,7 +125,8 @@ func materializeColdhookSharedPayload(_ plan: ColdhookSharedTargetPlan,
         }
         bytes.append(payload)
         command.fileSize = UInt64(bytes.count)
-        command.vmSize = max(command.vmSize, (start - command.fileOffset) + UInt64(bytes.count))
+        command.vmSize = max(command.vmSize,
+                             (start - command.fileOffset) + UInt64(payload.count))
         targetData.segments[index] = (command, bytes)
     }
 }
@@ -233,6 +234,11 @@ func prepareColdhookSharedTarget(
         }
     }
     try materializeColdhookSharedPayload(plan, into: &materialized, originalTargetData: targetData)
+    if let i = materialized.segments.firstIndex(where: { $0.0.name == "__DATA" }) {
+        var c = materialized.segments[i].0
+        c.vmSize = max(c.vmSize, plan.layout.tableVMAddr + plan.layout.tableSize - c.vmAddr)
+        materialized.segments[i].0 = c
+    }
     let sections = try makeColdhookSharedSections(plan)
     // `materializeColdhookSharedPayload` updates the segment command sizes in-place;
     // passing growth again would double-count the synthetic tail in load commands.
