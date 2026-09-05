@@ -16,7 +16,7 @@ for p in sorted(src.rglob('*.swift')):
     def add_orig(match):
         name = match.group('name')
         sig = match.group('sig').strip()
-        orig_name = f'coldhook_orig_{name}'
+        orig_name = f'orig_{name}'
         orig = f'@_silgen_name("{orig_name}")\nprivate func {orig_name}{sig}\n\n'
         return orig + f'@_silgen_name("{name}")\n' + match.group(0)
     cleaned = func_pat.sub(add_orig, cleaned)

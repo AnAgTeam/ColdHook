@@ -6,5 +6,5 @@ import Foundation
 
 public func coldhook_handler_1(_ arg: String) -> String {
     if arg == "trigger" { return "patched by @@PROJECTNAME@@" }
-    return coldhook_orig_coldhook_handler_1(arg)
+    return orig_coldhook_handler_1(arg)
 }

@@ -106,6 +106,8 @@
     "_COLDHOOK_DYN_SYM_" bin "__CH__" sym "__CH__" #fn ":\n    b _" #fn "\n" \
     ".globl _coldhook_orig_" #fn "\n" \
     "_coldhook_orig_" #fn ":\n    adrp x16, _coldhook_orig_slot_" #fn "@PAGE\n    ldr x16, [x16, _coldhook_orig_slot_" #fn "@PAGEOFF]\n    br x16\n" \
+    ".globl _orig_" #fn "\n" \
+    "_orig_" #fn ":\n    b _coldhook_orig_" #fn "\n" \
     ".section __DATA_CONST,__const\n.p2align 3\n" \
     "_coldhook_dyn_anchor_" #fn ":\n    .quad _COLDHOOK_DYN_SYM_" bin "__CH__" sym "__CH__" #fn "\n" \
   )
