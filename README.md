@@ -49,6 +49,11 @@ Python-зависимости для CLI устанавливаются стан
 отдельно выполни `python3 -m coldhook install-theos`. Эта команда ставит только NIC-шаблоны
 ColdHook в уже установленный `$THEOS`; сам Theos и его `logos.pl` она не устанавливает.
 
+Итого для сборки шаблонов нужны обе зависимости: установленный Python с пакетом ColdHook и
+установленный Theos (`$THEOS`, включая `logos.pl`, makefiles и clang/Swift toolchain). Python
+нужен также во время `make`: Logos-шаблон запускает `coldhook-logos`, а Swift-шаблон запускает
+встроенный `coldhook_swift_preprocess.py`.
+
 ### Windows
 
 Упаковка IPA использует встроенный Python `zipfile`, но текущий CLI для анализа и merge
@@ -149,6 +154,11 @@ Swift-шаблон не использует Swift macros и отдельный 
 `coldhook_swift_preprocess.py`; `make` запускает его автоматически, генерирует glue и затем
 Theos компилирует Swift-код обычным Swift-компилятором. Поэтому нужны Theos и Xcode/Swift
 (сборка Swift остаётся macOS-зависимой), но вручную устанавливать Swift macro toolchain не надо.
+
+Публичные shared-шаблоны (`coldhook-shared` и `coldhook-swift-shared`) не привязаны к checkout
+ColdHook: первый вызывает `coldhook-logos` из `PATH`, второй содержит свой Python-препроцессор.
+Старые embedded-шаблоны (`coldhook-tweak` и `coldhook-swift-tweak`) при генерации NIC получают
+абсолютный путь к текущему checkout ColdHook и привязаны к его месту установки.
 
 В `Tweak.x` можно использовать привычный Logos:
 
