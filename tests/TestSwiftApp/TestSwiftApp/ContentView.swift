@@ -6,18 +6,9 @@
 //
 
 import SwiftUI
-import Darwin
+import TestFramework
 
-private func frameworkLabel() -> String {
-    let path = Bundle.main.bundleURL
-        .appendingPathComponent("Frameworks/TestFramework.framework/TestFramework")
-        .path
-    guard let handle = dlopen(path, RTLD_NOW),
-          let symbol = dlsym(handle, "$s13TestFramework14frameworkProbes5Int32VyF") else { return "Framework unavailable" }
-    typealias Probe = @convention(c) () -> Int32
-    let value = unsafeBitCast(symbol, to: Probe.self)()
-    return "Framework value: \(value)"
-}
+private func frameworkLabel() -> String { "Framework value: \(frameworkProbe())" }
 
 // Мишень №1: подмена возвращаемой строки.
 // @inline(never) — чтобы функция осталась отдельной с символом, а не заинлайнилась в body.
@@ -63,8 +54,4 @@ struct ContentView: View {
         }
         .padding()
     }
-}
-
-#Preview {
-    ContentView()
 }

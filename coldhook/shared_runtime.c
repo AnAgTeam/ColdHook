@@ -10,6 +10,7 @@
 #include <mach-o/dyld.h>
 #include <mach-o/getsect.h>
 #include <mach-o/loader.h>
+#include <os/log.h>
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -25,6 +26,16 @@ struct orig_entry {
 static pthread_mutex_t g_orig_lock = PTHREAD_MUTEX_INITIALIZER;
 static struct orig_entry *g_orig_entries;
 static _Thread_local const char *g_last_error;
+static int g_debug = -1;
+static os_log_t g_log;
+
+static int coldhook_debug_enabled(void) {
+    if (g_debug < 0) {
+        g_debug = getenv("COLDHOOK_DEBUG") ? 1 : 0;
+        g_log = os_log_create("com.coldhook.runtime", "shared");
+    }
+    return g_debug;
+}
 
 void *coldhook_shared_orig_lookup(uint64_t hook_id) {
     pthread_mutex_lock(&g_orig_lock);
@@ -84,10 +95,19 @@ static int valid_range(const uint8_t *base, size_t total, uint32_t off, size_t s
 static void process_image(const struct mach_header *header, intptr_t slide) {
     if (!header || header->magic != MH_MAGIC_64) return;
 
+    if (coldhook_debug_enabled()) {
+        Dl_info info = {0};
+        if (dladdr(header, &info) && info.dli_fname)
+            os_log(g_log, "inspect image %{public}s", info.dli_fname);
+    }
+
     unsigned long section_size = 0;
     uint8_t *table_bytes = (uint8_t *)getsectiondata((const struct mach_header_64 *)header,
                                                       "__COLDHOOK_DATA", "__coldhook", &section_size);
     if (!table_bytes || section_size < sizeof(struct coldhook_shared_table)) return;
+
+    if (coldhook_debug_enabled())
+        os_log(g_log, "shared table found (%lu bytes)", section_size);
 
     const struct coldhook_shared_table *table = (const struct coldhook_shared_table *)table_bytes;
     if (table->magic != COLDHOOK_TABLE_MAGIC || table->version != COLDHOOK_TABLE_VERSION) return;
@@ -112,6 +132,8 @@ static void process_image(const struct mach_header *header, intptr_t slide) {
         memcpy(name, strings + record->handler_name_offset, record->handler_name_size);
         name[record->handler_name_size] = '\0';
         void *handler = dlsym(RTLD_DEFAULT, name);
+        if (coldhook_debug_enabled())
+            os_log(g_log, "resolve handler '%{public}s' -> %p", name, handler);
         if (!handler) {
             fprintf(stderr, "coldhook: required handler '%s' was not found\n", name);
             abort();

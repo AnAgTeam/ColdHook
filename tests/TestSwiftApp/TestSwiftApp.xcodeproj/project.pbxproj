@@ -27,6 +27,8 @@
 		D5843BD32FCF3ADF003FE90A /* TestSwiftApp.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = TestSwiftApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		D5843BE02FCF3AE0003FE90A /* TestSwiftAppTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = TestSwiftAppTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		D5843BEA2FCF3AE0003FE90A /* TestSwiftAppUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = TestSwiftAppUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		F00000000000000000000001 /* TestFramework.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = TestFramework.framework; sourceTree = BUILT_PRODUCTS_DIR; };
+		F00000000000000000000002 /* TestFramework.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TestFramework.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -52,9 +54,11 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				F0000000000000000000000B /* TestFramework.framework */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		F0000000000000000000000B /* TestFramework.framework */ = {isa = PBXBuildFile; fileRef = F00000000000000000000001 /* TestFramework.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		D5843BDD2FCF3AE0003FE90A /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
@@ -71,11 +75,28 @@
 		};
 /* End PBXFrameworksBuildPhase section */
 
+/* Begin PBXCopyFilesBuildPhase section */
+		F00000000000000000000007 /* Embed Frameworks */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (F0000000000000000000000B /* TestFramework.framework */,);
+			name = "Embed Frameworks";
+			runOnlyForDeploymentPostprocessing = 0;
+			dstPath = "";
+			dstSubfolderSpec = 10;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase additions */
+		F00000000000000000000003 /* TestFramework Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (F00000000000000000000004 /* TestFramework.swift */,); runOnlyForDeploymentPostprocessing = 0; };
+/* End PBXSourcesBuildPhase additions */
+
 /* Begin PBXGroup section */
 		D5843BCA2FCF3ADF003FE90A = {
 			isa = PBXGroup;
 			children = (
 				D5843BD52FCF3ADF003FE90A /* TestSwiftApp */,
+				F00000000000000000000006 /* TestFramework */,
 				D5843BE32FCF3AE0003FE90A /* TestSwiftAppTests */,
 				D5843BED2FCF3AE0003FE90A /* TestSwiftAppUITests */,
 				D5843BD42FCF3ADF003FE90A /* Products */,
@@ -86,15 +107,28 @@
 			isa = PBXGroup;
 			children = (
 				D5843BD32FCF3ADF003FE90A /* TestSwiftApp.app */,
+				F00000000000000000000001 /* TestFramework.framework */,
 				D5843BE02FCF3AE0003FE90A /* TestSwiftAppTests.xctest */,
 				D5843BEA2FCF3AE0003FE90A /* TestSwiftAppUITests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
 		};
+		F00000000000000000000006 /* TestFramework */ = {isa = PBXGroup; children = (F00000000000000000000002 /* TestFramework.swift */,); path = TestFramework; sourceTree = "<group>"; };
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		F00000000000000000000004 /* TestFramework.swift */ = {isa = PBXBuildFile; fileRef = F00000000000000000000002 /* TestFramework.swift */; };
+		F00000000000000000000005 /* TestFramework Frameworks */ = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+		F00000000000000000000008 /* PBXTargetDependency */ = {isa = PBXTargetDependency; target = F00000000000000000000009 /* TestFramework */; };
+		F00000000000000000000009 /* TestFramework */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = F0000000000000000000000A /* Build configuration list for PBXNativeTarget "TestFramework" */;
+			buildPhases = (F00000000000000000000003 /* TestFramework Sources */, F00000000000000000000005 /* TestFramework Frameworks */);
+			buildRules = (); dependencies = (); name = TestFramework; productName = TestFramework;
+			productReference = F00000000000000000000001 /* TestFramework.framework */;
+			productType = "com.apple.product-type.framework";
+		};
 		D5843BD22FCF3ADF003FE90A /* TestSwiftApp */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = D5843BF42FCF3AE0003FE90A /* Build configuration list for PBXNativeTarget "TestSwiftApp" */;
@@ -102,12 +136,11 @@
 				D5843BCF2FCF3ADF003FE90A /* Sources */,
 				D5843BD02FCF3ADF003FE90A /* Frameworks */,
 				D5843BD12FCF3ADF003FE90A /* Resources */,
-				D5843C102FCF3ADF003FE90A /* Embed TestFramework */,
+				F00000000000000000000007 /* Embed Frameworks */,
 			);
 			buildRules = (
 			);
-			dependencies = (
-			);
+			dependencies = (F00000000000000000000008 /* PBXTargetDependency */,);
 			fileSystemSynchronizedGroups = (
 				D5843BD52FCF3ADF003FE90A /* TestSwiftApp */,
 			);
@@ -185,6 +218,7 @@
 						CreatedOnToolsVersion = 26.3;
 						TestTargetID = D5843BD22FCF3ADF003FE90A;
 					};
+					F00000000000000000000009 = { CreatedOnToolsVersion = 26.3; };
 				};
 			};
 			buildConfigurationList = D5843BCE2FCF3ADF003FE90A /* Build configuration list for PBXProject "TestSwiftApp" */;
@@ -202,6 +236,7 @@
 			projectRoot = "";
 			targets = (
 				D5843BD22FCF3ADF003FE90A /* TestSwiftApp */,
+				F00000000000000000000009 /* TestFramework */,
 				D5843BDF2FCF3AE0003FE90A /* TestSwiftAppTests */,
 				D5843BE92FCF3AE0003FE90A /* TestSwiftAppUITests */,
 			);
@@ -231,25 +266,6 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
-
-/* Begin PBXShellScriptBuildPhase section */
-		D5843C102FCF3ADF003FE90A /* Embed TestFramework */ = {
-			isa = PBXShellScriptBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			inputPaths = (
-				"${SRCROOT}/TestSwiftApp/TestFramework.swift",
-			);
-			name = "Embed TestFramework";
-			outputPaths = (
-				"${BUILT_PRODUCTS_DIR}/TestSwiftApp.app/Frameworks/TestFramework.framework/TestFramework",
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-			shellPath = /bin/sh;
-			shellScript = "set -e\nmkdir -p ${BUILT_PRODUCTS_DIR}/TestSwiftApp.app/Frameworks/TestFramework.framework\nxcrun swiftc -target arm64-apple-ios${IPHONEOS_DEPLOYMENT_TARGET} -sdk ${SDKROOT} -parse-as-library -emit-library -module-name TestFramework -Xlinker -headerpad_max_install_names -Xlinker -install_name -Xlinker @rpath/TestFramework.framework/TestFramework ${SRCROOT}/TestSwiftApp/TestFramework.swift -o ${BUILT_PRODUCTS_DIR}/TestSwiftApp.app/Frameworks/TestFramework.framework/TestFramework\n";
-		};
-/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		D5843BCF2FCF3ADF003FE90A /* Sources */ = {
@@ -560,6 +576,8 @@
 			};
 			name = Release;
 		};
+		F0000000000000000000000C /* Debug */ = {isa = XCBuildConfiguration; buildSettings = {CLANG_ENABLE_MODULES = YES; DEFINES_MODULE = YES; DYLIB_INSTALL_NAME_BASE = "@rpath"; GENERATE_INFOPLIST_FILE = YES; INFOPLIST_KEY_CFBundlePackageType = FMWK; IPHONEOS_DEPLOYMENT_TARGET = 15.6; PRODUCT_BUNDLE_IDENTIFIER = org.toilettrauma.TestFramework; PRODUCT_NAME = TestFramework; SKIP_INSTALL = YES; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = "1,2"; }; name = Debug; };
+		F0000000000000000000000D /* Release */ = {isa = XCBuildConfiguration; buildSettings = {CLANG_ENABLE_MODULES = YES; DEFINES_MODULE = YES; DYLIB_INSTALL_NAME_BASE = "@rpath"; GENERATE_INFOPLIST_FILE = YES; INFOPLIST_KEY_CFBundlePackageType = FMWK; IPHONEOS_DEPLOYMENT_TARGET = 15.6; PRODUCT_BUNDLE_IDENTIFIER = org.toilettrauma.TestFramework; PRODUCT_NAME = TestFramework; SKIP_INSTALL = YES; SWIFT_VERSION = 5.0; SWIFT_OPTIMIZATION_LEVEL = "-O"; TARGETED_DEVICE_FAMILY = "1,2"; }; name = Release; };
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -599,6 +617,7 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
+		F0000000000000000000000A /* Build configuration list for PBXNativeTarget "TestFramework" */ = {isa = XCConfigurationList; buildConfigurations = (F0000000000000000000000C /* Debug */, F0000000000000000000000D /* Release */,); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
 /* End XCConfigurationList section */
 	};
 	rootObject = D5843BCB2FCF3ADF003FE90A /* Project object */;
