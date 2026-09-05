@@ -89,11 +89,18 @@ def patch_shared_bundle(inp: str, dylib: str, out: str, do_sign: bool = False) -
     if not os.path.exists(dylib):
         raise PatchError(f"shared hook-dylib не найден: {dylib}")
     work = tempfile.mkdtemp(prefix="coldhook_shared_bundle_")
+    is_ipa = inp.lower().endswith(".ipa") or os.path.isfile(inp)
     try:
-        if not inp.endswith(".app") or not os.path.isdir(inp):
-            raise PatchError("shared: ожидается каталог .app")
-        stage = os.path.join(work, os.path.basename(inp))
-        shutil.copytree(inp, stage, symlinks=True)
+        if is_ipa:
+            print(f"{C_CYAN}== распаковка IPA: {os.path.basename(inp)}{C_RST}")
+            _run(["unzip", "-q", "-o", inp, "-d", work], "unzip")
+            stage = work
+        else:
+            if not inp.endswith(".app") or not os.path.isdir(inp):
+                raise PatchError("shared: ожидается каталог .app или файл .ipa")
+            stage = os.path.join(work, os.path.basename(inp))
+            shutil.copytree(inp, stage, symlinks=True)
+        app = _find_app(stage)
         dylib_real = os.path.realpath(dylib)
         patched = 0
         for root, _, files in os.walk(stage):
@@ -117,9 +124,16 @@ def patch_shared_bundle(inp: str, dylib: str, out: str, do_sign: bool = False) -
                 if do_sign:
                     build.toolchain.sign(target)
                 patched += 1
-        if os.path.exists(out):
-            shutil.rmtree(out)
-        shutil.copytree(stage, out, symlinks=True)
+        if is_ipa:
+            print(f"{C_CYAN}== запаковка IPA: {os.path.basename(out)}{C_RST}")
+            out_abs = os.path.abspath(out)
+            if os.path.exists(out_abs):
+                os.remove(out_abs)
+            _run(["zip", "-qry", out_abs, "Payload"], "zip", cwd=stage)
+        else:
+            if os.path.exists(out):
+                shutil.rmtree(out)
+            shutil.copytree(stage, out, symlinks=True)
     finally:
         shutil.rmtree(work, ignore_errors=True)
     print(f"{C_GREEN}OK shared bundle: обработано Mach-O: {patched}{C_RST}")

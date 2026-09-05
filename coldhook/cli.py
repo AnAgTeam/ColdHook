@@ -101,8 +101,8 @@ def build_parser() -> argparse.ArgumentParser:
                     help="подписать бинари в бандле (по умолчанию НЕТ — твоя забота)")
     pb.set_defaults(func=cmd_ipa)
 
-    ps = sub.add_parser("shared", help="применить один shared hook-dylib ко всем Mach-O в .app")
-    ps.add_argument("input", help="входной .app-каталог")
+    ps = sub.add_parser("shared", help="применить один shared hook-dylib ко всем Mach-O в .app/.ipa")
+    ps.add_argument("input", help="входной .app-каталог или .ipa-файл")
     ps.add_argument("--dylib", required=True, help="общий hook-dylib")
     ps.add_argument("--out", "-o", required=True, help="выходной .app-каталог")
     ps.add_argument("--sign-bundle", action="store_true",
