@@ -1,4 +1,4 @@
----
+--- !tapi-tbd
 tbd-version:     4
 targets:         [ arm64-ios, arm64e-ios ]
 install-name:    '@rpath/libcoldhook.dylib'
