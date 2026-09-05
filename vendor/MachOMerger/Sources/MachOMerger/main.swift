@@ -235,6 +235,20 @@ if coldhookModeArg == "shared" {
             if type == UInt32(LC_ID_DYLIB), size >= 24 {
                 var raw = image.data.subdata(in: pos..<(pos + size))
                 raw.replaceSubrange(0..<4, with: Data(fromObject: UInt32(LC_LOAD_DYLIB)))
+                // Shared hooks are bundled for sideloading.  Resolve the copied
+                // runtime dylib relative to the application executable instead
+                // of retaining Theos' jailbreak path (/Library/MobileSubstrate/...).
+                let pathBytes = Array(raw.dropFirst(24))
+                let end = pathBytes.firstIndex(of: 0) ?? pathBytes.count
+                let fileName = String(bytes: pathBytes[..<end], encoding: .utf8) ?? "libcoldhook.dylib"
+                let baseName = (fileName as NSString).lastPathComponent
+                let bundledPath = "@executable_path/Frameworks/\(baseName)"
+                var encoded = Array(bundledPath.utf8) + [0]
+                let capacity = size - 24
+                if encoded.count <= capacity {
+                    encoded += Array(repeating: 0, count: capacity - encoded.count)
+                    raw.replaceSubrange(24..<size, with: Data(encoded))
+                }
                 return raw
             }
             pos += size
