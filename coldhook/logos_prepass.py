@@ -151,17 +151,17 @@ def _emit_hookf(ret, target, argdecls, body, gated, group, shared_binary=None):
         out.append(f"CH_DECLARE_GATE({fid});")
     out.append(f"{ret} {fid}({sig}) {tbody}")
     out.append('#ifdef __cplusplus\n}\n#endif')
-    if shared_binary is not None and gated:
-        raise ValueError("%hookf_shared внутри %group пока не поддержан")
     if is_addr:
         if shared_binary is not None:
-            out.append(f'CH_DYN_ADDR("{shared_binary}", {target}, {fid});')
+            macro = "CH_DYN_ADDR_GATED" if gated else "CH_DYN_ADDR"
+            out.append(f'{macro}("{shared_binary}", {target}, {fid});')
         else:
             macro = "CH_HOOK_ADDR_GATED" if gated else "CH_HOOK_ADDR"
             out.append(f"{macro}({target}, {fid});")
     else:
         if shared_binary is not None:
-            out.append(f'CH_DYN_SYM("{shared_binary}", "{target}", {fid});')
+            macro = "CH_DYN_SYM_GATED" if gated else "CH_DYN_SYM"
+            out.append(f'{macro}("{shared_binary}", "{target}", {fid});')
         else:
             macro = "CH_HOOK_SYM_GATED" if gated else "CH_HOOK_SYM"
             out.append(f'{macro}("{target}", {fid});')
