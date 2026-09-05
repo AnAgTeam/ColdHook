@@ -2,6 +2,14 @@
 
 ColdHook статически патчит Mach-O-бинари iOS/macOS: код хука сливается с приложением на этапе сборки, без jailbreak runtime-патчинга и W^X-переходов. Например, для sideload.
 
+## Зачем
+
+В sideload без джейлбрейка нельзя патчить код в рантайме — в частности, использовать
+`MSHookFunction` (`%hookf`). При этом `MSHookMessage` для Objective-C остаётся рабочим.
+ColdHook позволяет удобно патчить функции не в рантайме, а статически, на этапе сборки.
+Swift-код практически всегда статичен, поэтому обычный Logos-подход в sideload для него
+почти бессилен; ColdHook закрывает этот пробел статическими хуками по mangled-имени или адресу.
+
 Поддерживаются:
 
 - хуки по символу (`CH_HOOK_SYM`);
@@ -10,7 +18,7 @@ ColdHook статически патчит Mach-O-бинари iOS/macOS: код
 - shared-режим — одна hook dylib для приложения и его framework-ов;
 - Logos `%hookf`, `%ctor`, `%group` и ObjC-свизл;
 - Swift hooks по mangled имени или адресу;
-- FAT Mach-O с обработкой arm64/arm64e-слайсов;
+- FAT Mach-O с обработкой arm64/arm64e-слайсов в обычной команде `merge`/`patch`;
 - патчинг `.app` и `.ipa` с последующей переподписью.
 
 Внутренняя схема сегментов, таблицы shared-режима, bootstrap, relocation и ограничения Mach-O описаны в [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
@@ -37,11 +45,16 @@ swift build -c release
 cd ../..
 ```
 
-Python-зависимости для CLI устанавливаются стандартным способом проекта. Для Theos-шаблонов отдельно выполни `python3 -m coldhook install-theos`.
+Python-зависимости для CLI устанавливаются стандартным способом проекта. Для Theos-шаблонов
+отдельно выполни `python3 -m coldhook install-theos`. Эта команда ставит только NIC-шаблоны
+ColdHook в уже установленный `$THEOS`; сам Theos и его `logos.pl` она не устанавливает.
 
 ### Windows
 
-Windows поддерживает офлайн-патчинг уже собранных артефактов: скачай `MachOMerger.exe`, hook dylib и runtime из релиза, затем запусти тот же Python CLI. IPA распаковывается и запаковывается встроенным `zipfile`, поэтому `unzip`/`zip` не нужны. Сборка hook-кода, Theos и подпись остаются macOS-зависимыми.
+Упаковка IPA использует встроенный Python `zipfile`, но текущий CLI для анализа и merge
+требует `lipo`/`otool` (а сборка hook-кода — `xcrun clang`). Поэтому полноценный офлайн-патчинг
+из готовых артефактов на Windows пока не поддерживается; Windows-вариант `MachOMerger.exe`
+сам по себе недостаточен.
 
 ### Использование
 
@@ -72,9 +85,12 @@ python3 -m coldhook shared input.ipa \
   --verbose
 ```
 
-Для тестовых bundle с FAT XCTest-бинарями можно добавить `--skip-unsupported`.
+Для тестовых bundle с неподдерживаемыми служебными Mach-O можно добавить `--skip-unsupported`.
+Команда `shared` не выполняет FAT-слайсинг автоматически и рассчитана на thin Mach-O.
 
-Подпись по умолчанию не выполняется для `ipa`; после merge app нужно переподписать способом, подходящим для конкретного sideload-инструмента.
+Подпись по умолчанию не выполняется для `ipa`. При `--sign-bundle` подписываются обработанные
+target-бинари; добавленные shared hook/runtime dylib нужно подписать отдельно перед подписью
+самого app способом, подходящим для конкретного sideload-инструмента.
 
 ## C/Objective-C API
 
@@ -122,6 +138,17 @@ $THEOS/bin/nic.pl
 ```
 
 В меню выбери `iphone/coldhook_tweak` для Logos/Objective-C или `iphone/coldhook_tweak_swift` для Swift. После создания проекта обычные `make`/`make package` остаются Theos-командами.
+
+Для Logos нужен установленный Theos с `$THEOS/bin/logos.pl`: ColdHook запускает собственный
+Python-пре-пасс, который переводит `%hookf`/`%hookf_shared` в статические декларации, а
+оставшиеся `%hook`, `%ctor` и `%group` обрабатывает штатный `logos.pl`. Отдельно ставить
+«препроцессор ColdHook» не нужно — он входит в Python-пакет (`coldhook-logos`), но при установке
+пакета как CLI-команды должен быть доступен в `PATH`.
+
+Swift-шаблон не использует Swift macros и отдельный Swift-препроцессор. В проект уже входит
+`coldhook_swift_preprocess.py`; `make` запускает его автоматически, генерирует glue и затем
+Theos компилирует Swift-код обычным Swift-компилятором. Поэтому нужны Theos и Xcode/Swift
+(сборка Swift остаётся macOS-зависимой), но вручную устанавливать Swift macro toolchain не надо.
 
 В `Tweak.x` можно использовать привычный Logos:
 

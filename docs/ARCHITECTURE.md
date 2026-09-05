@@ -8,6 +8,68 @@
 
 Shared использует тот же append-style layout, encoder ARM64 branch и relocation-путь, что и append. Отличие — таблица shared-записей, стабы dispatch и `LC_LOAD_DYLIB` для hook/runtime.
 
+## Граф режимов и фаз пайплайна
+
+Каждый режим показан отдельно, поэтому названия фаз и итоговые секции не сжимаются в одну
+широкую схему. Общая последовательность начинается в `coldhook.py`; `libcoldhook.dylib`
+и `userhooks.dylib` участвуют только в runtime-цепочке shared.
+
+### Embedded
+
+```mermaid
+flowchart TD
+    C["Фаза 1 · coldhook.py<br/>выбрать target и hook payload"] --> M["Фаза 2 · MachOMerger<br/>merge в адресное пространство target"]
+    M --> O["Фаза 3 · итоговый target Mach-O<br/>__BTEXT + __BDATA<br/>hook-код встроен"]
+    classDef phase fill:#eef2ff,stroke:#6366f1,color:#111827,stroke-width:1.5px
+    class C,M,O phase
+```
+
+### Append
+
+```mermaid
+flowchart TD
+    C["Фаза 1 · coldhook.py<br/>подготовить target и payload"] --> M["Фаза 2 · MachOMerger<br/>дописать payload в хвост сегментов"]
+    M --> O["Фаза 3 · итоговый target Mach-O<br/>исходные __TEXT/__DATA<br/>+ appended hook payload"]
+    classDef phase fill:#eef2ff,stroke:#6366f1,color:#111827,stroke-width:1.5px
+    class C,M,O phase
+```
+
+### Interleave
+
+```mermaid
+flowchart TD
+    C["Фаза 1 · coldhook.py<br/>подготовить split-info и payload"] --> M["Фаза 2 · MachOMerger<br/>interleave + relocation split-info"]
+    M --> O["Фаза 3 · итоговый target Mach-O<br/>сегменты переплетены<br/>relocation offsets обновлены"]
+    classDef phase fill:#eef2ff,stroke:#6366f1,color:#111827,stroke-width:1.5px
+    class C,M,O phase
+```
+
+### Shared
+
+```mermaid
+flowchart TD
+    C["Фаза 1 · coldhook.py<br/>найти target images и userhooks.dylib"] --> M["Фаза 2 · MachOMerger<br/>патч target и добавить LC_LOAD_DYLIB"]
+    M --> T["Фаза 3 · target image<br/>(__TEXT, __DATA, …)<br/>+ (__COLDHOOK_TEXT, __COLDHOOK_DATA)"]
+    T --> ST["__COLDHOOK_TEXT<br/>stub0, stub1, …"]
+    T --> SD["__COLDHOOK_DATA<br/>coldhook_shared_table<br/>coldhook_shared_record0, record1, …<br/>strings …"]
+    T --> R["Фаза 4 · libcoldhook.dylib<br/>bootstrap: shared_record[]<br/>bind handler slots"]
+    R <--> SD
+    R <--> U["Фаза 5 · userhooks.dylib<br/>handlers + %orig"]
+    U --> O["orig trampoline<br/>в target image"]
+    ST --> SD
+    classDef phase fill:#eef2ff,stroke:#6366f1,color:#111827,stroke-width:1.5px
+    classDef target fill:#ecfdf5,stroke:#059669,color:#064e3b,stroke-width:1.5px
+    classDef runtime fill:#fff7ed,stroke:#ea580c,color:#7c2d12,stroke-width:1.5px
+    class C,M phase
+    class T,ST,SD target
+    class R,U,O runtime
+```
+
+В shared-схеме `__COLDHOOK_TEXT → __COLDHOOK_DATA` — это dispatch через слот. Bootstrap
+проходит `shared_record[]`, читает metadata, разрешает handler-ы из `userhooks.dylib`,
+заполняет slots и связывает `%orig` с trampoline, оставленным в target, поэтому раздельные
+ASLR-слайды не конфликтуют.
+
 ## Shared table
 
 В target создаются два сегмента:
