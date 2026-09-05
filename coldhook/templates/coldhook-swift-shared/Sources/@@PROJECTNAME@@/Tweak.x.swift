@@ -4,7 +4,8 @@ import Foundation
 
 // @ColdHookMangled(binary: "TestSwiftApp", target: "$s12TestSwiftApp3url3forS2S_tF")
 
-@_silgen_name("coldhook_orig_1")
+// CH_DYN_SYM names the original trampoline after the handler symbol.
+@_silgen_name("coldhook_orig_coldhook_handler_1")
 func ch_orig(_ arg: String) -> String
 
 @_silgen_name("coldhook_handler_1")
