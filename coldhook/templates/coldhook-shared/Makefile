@@ -5,8 +5,8 @@ include $(THEOS)/makefiles/common.mk
 
 TWEAK_NAME = @@PROJECTNAME@@
 COLDHOOK = @@COLDHOOK@@
-# Path to the universal shared bootstrap dylib. Override this for your build host.
-COLDHOOK_RUNTIME_DIR ?= /usr/local/lib
+# Path to the runtime linker stub. The real dylib is only needed at launch.
+COLDHOOK_RUNTIME_DIR ?= $(COLDHOOK)/coldhook/runtime
 
 # Shared backend: the same dylib may be applied to every Mach-O in the bundle.
 _CHRC := $(shell mkdir -p .coldhook && python3 $(COLDHOOK)/coldhook/logos_prepass.py --strip-only Tweak.x 1> .coldhook/Tweak.xm; echo $$?)
