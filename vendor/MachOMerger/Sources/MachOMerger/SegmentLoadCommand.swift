@@ -112,7 +112,7 @@ func generateSegmentLoadCommands(infoA: MachOMergeData, infoB: MachOMergeData, r
 
             // ColdHook: если сливаем __init_offsets A+B — перенацеливаем секцию A на
             // объединённый массив (он лежит в мёртвой области заголовка B). См. main.swift.
-            if let im = coldhookInitMerge,
+            if coldhookModeArg != "shared", let im = coldhookInitMerge,
                sect.section == "__init_offsets", (sect.flags.rawValue & 0xff) == 0x16 {
                 sectLC.addr = im.combinedVMAddr
                 sectLC.size = im.combinedSize
