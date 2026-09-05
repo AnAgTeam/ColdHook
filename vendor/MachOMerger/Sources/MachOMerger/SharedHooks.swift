@@ -40,7 +40,7 @@ private func readBInstruction(_ address: UInt64, from data: MachOMergeData) -> U
 }
 
 /// Reads ColdHook magic declarations. Dynamic forms encode selector, locator and
-/// handler as `_COLDHOOK_DYN_<kind>_<selector>__<locator>__<handler>`.
+/// handler as `_COLDHOOK_DYN_<kind>_<selector>__CH__<locator>__CH__<handler>`.
 /// In a normal clang-produced dylib the magic symbol is the handler itself (its
 /// first instruction is a prologue, not a branch), so the handler name is derived
 /// directly from the magic symbol rather than decoding code bytes.
@@ -55,7 +55,7 @@ func extractColdhookSharedSpecs(from resolver: ColdhookSymbolResolver, data: Mac
         let handlerName: String
         if hook.name.hasPrefix("_COLDHOOK_DYN_") {
             let payload = String(hook.name.dropFirst("_COLDHOOK_DYN_".count))
-            let parts = payload.components(separatedBy: "__")
+            let parts = payload.components(separatedBy: "__CH__")
             guard parts.count == 3 else { throw ColdhookSharedHookError.invalidBranch(hook.name) }
             locator = parts[1]
             handlerName = parts[2]

@@ -93,25 +93,25 @@
 #define CH_HOOK_SYM(sym, fn) CH__STUB_SYM(sym, fn)
 
 // Именованные shared-декларации. Поля сериализуются прямо в имени magic-экспорта;
-// используем `__` как безопасный для assembler разделитель (символ `|` inline
-// assembler не принимает). Поля не должны содержать `__`.
+// используем `__CH__` как безопасный для assembler разделитель (символ `|` inline
+// assembler не принимает). Поля не должны содержать `__CH__`.
 #define CH_DYN_SYM(bin, sym, fn) \
   __asm__( \
     ".text\n.p2align 2\n" \
-    ".globl _COLDHOOK_DYN_SYM_" bin "__" sym "__" #fn "\n" \
-    ".no_dead_strip _COLDHOOK_DYN_SYM_" bin "__" sym "__" #fn "\n" \
-    "_COLDHOOK_DYN_SYM_" bin "__" sym "__" #fn ":\n    b _" #fn "\n" \
+    ".globl _COLDHOOK_DYN_SYM_" bin "__CH__" sym "__CH__" #fn "\n" \
+    ".no_dead_strip _COLDHOOK_DYN_SYM_" bin "__CH__" sym "__CH__" #fn "\n" \
+    "_COLDHOOK_DYN_SYM_" bin "__CH__" sym "__CH__" #fn ":\n    b _" #fn "\n" \
     ".section __DATA_CONST,__const\n.p2align 3\n" \
-    "_coldhook_dyn_anchor_" #fn ":\n    .quad _COLDHOOK_DYN_SYM_" bin "__" sym "__" #fn "\n" \
+    "_coldhook_dyn_anchor_" #fn ":\n    .quad _COLDHOOK_DYN_SYM_" bin "__CH__" sym "__CH__" #fn "\n" \
   )
 #define CH_DYN_ADDR(bin, off, fn) \
   __asm__( \
     ".text\n.p2align 2\n" \
-    ".globl _COLDHOOK_DYN_ADDR_" bin "__COLDHOOK_ADDR_" #off "__" #fn "\n" \
-    ".no_dead_strip _COLDHOOK_DYN_ADDR_" bin "__COLDHOOK_ADDR_" #off "__" #fn "\n" \
-    "_COLDHOOK_DYN_ADDR_" bin "__COLDHOOK_ADDR_" #off "__" #fn ":\n    b _" #fn "\n" \
+    ".globl _COLDHOOK_DYN_ADDR_" bin "__CH__COLDHOOK_ADDR_" #off "__CH__" #fn "\n" \
+    ".no_dead_strip _COLDHOOK_DYN_ADDR_" bin "__CH__COLDHOOK_ADDR_" #off "__CH__" #fn "\n" \
+    "_COLDHOOK_DYN_ADDR_" bin "__CH__COLDHOOK_ADDR_" #off "__CH__" #fn ":\n    b _" #fn "\n" \
     ".section __DATA_CONST,__const\n.p2align 3\n" \
-    "_coldhook_dyn_anchor_" #fn ":\n    .quad _COLDHOOK_DYN_ADDR_" bin "__COLDHOOK_ADDR_" #off "__" #fn "\n" \
+    "_coldhook_dyn_anchor_" #fn ":\n    .quad _COLDHOOK_DYN_ADDR_" bin "__CH__COLDHOOK_ADDR_" #off "__CH__" #fn "\n" \
   )
 
 // --- GATED хук: статически установлен, но рантайм-переключаемый ----------------------
