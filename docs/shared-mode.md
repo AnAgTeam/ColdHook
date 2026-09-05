@@ -1,9 +1,18 @@
-# ColdHook Shared Mode — идея (набросок)
+# ColdHook Shared Mode — архитектура и актуальные задачи
 
 Цель: одна хук-либа на **несколько бинарей** процесса (main + фреймворки), загружается как
 обычный dylib — сегменты НЕ переименовываются. Это разблокирует ObjC `%hook` (рантайм уникует
 selrefs из нормального `__DATA`) и позволяет держать тело хука один раз, а не дублировать в
-каждый таргет. Не реализация, а план (как `swift-dsl.md`, `sig-prescan.md`).
+каждый таргет.
+
+Реализовано: shared table/bootstrap, selector filtering, append-стратегия, `%hookf_shared`,
+shared gated-группы, ORIG slots, Logos/NIC-шаблоны и runtime linker stub.
+
+## Следующие этапы
+
+- объединение таблиц при применении нескольких shared hook dylib;
+- provider-aware resolution вместо глобального `RTLD_DEFAULT` при совпадающих handler-именах;
+- Swift DSL/build plugin для автоматической генерации glue и поиска mangled symbol.
 
 ## Embedded vs Shared
 

@@ -1,4 +1,23 @@
-# ColdHook Swift DSL — идея (набросок)
+# ColdHook Swift DSL — план следующего этапа
+
+Текущий shared Swift-шаблон использует ручной `glue.c`. Следующая версия должна убрать этот
+файл из пользовательского workflow.
+
+## Planned workflow
+
+```swift
+@ColdHook(binary: "TestSwiftApp", symbol: "TestSwiftApp.url(for:)")
+func url(_ domain: String) -> String {
+    if domain != "application" { return "https://fallback.coldhook" }
+    return coldhookOriginal(domain)
+}
+```
+
+`coldhook-swift`/SwiftPM build plugin получает target Mach-O после его сборки, запускает
+`nm`/`swift-demangle`, находит mangled symbol и генерирует `ColdHookGenerated.c`/`.S` с
+`CH_DYN_SYM` или `CH_DYN_ADDR`, ORIG-именем и необходимыми объявлениями. Swift macro отвечает
+за декларацию и типизированное тело, а внешний generator — за связь с конкретным бинарём.
+Макрос сам по себе не может прочитать target symbol table во время компиляции.
 
 Цель: писать хуки чистых Swift-методов так же привычно, как Logos для ObjC. Движок уже умеет
 by-name / by-offset / ORIG (см. `tests/macos/run_swift.py`, `tests/hooks/swift_replace`); это —
