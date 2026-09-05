@@ -70,10 +70,6 @@ def patch_bundle(inp: str, config: Config, out: str, do_sign: bool = False) -> s
             stage = dst
 
         app = _find_app(stage)
-        hook_descriptions = _shared_hook_descriptions(dylib) if verbose else []
-        if verbose:
-            for description in hook_descriptions:
-                print(f"will add {description}")
         print(f"{C_CYAN}== .app: {os.path.relpath(app, work)}{C_RST}")
 
         for t in config.targets:
@@ -131,6 +127,10 @@ def patch_shared_bundle(inp: str, dylib: str, out: str, do_sign: bool = False,
             stage = os.path.join(work, os.path.basename(inp))
             shutil.copytree(inp, stage, symlinks=True)
         app = _find_app(stage)
+        hook_descriptions = _shared_hook_descriptions(dylib) if verbose else []
+        if verbose:
+            for description in hook_descriptions:
+                print(f"will add {description}")
         # Shared sideload bundles carry the hook runtime with the app.  The
         # merger rewrites LC_LOAD_DYLIB to @executable_path/Frameworks/<name>.
         bundled_dylib = None
