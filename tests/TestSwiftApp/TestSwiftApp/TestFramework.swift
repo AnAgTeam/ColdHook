@@ -1,6 +1,6 @@
 import Foundation
 
-@_cdecl("framework_probe")
+@inline(never)
 public func frameworkProbe() -> Int32 {
     return 7
 }

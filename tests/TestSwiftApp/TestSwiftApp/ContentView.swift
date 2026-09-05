@@ -9,8 +9,11 @@ import SwiftUI
 import Darwin
 
 private func frameworkLabel() -> String {
-    guard let handle = dlopen("@rpath/TestFramework.framework/TestFramework", RTLD_NOW),
-          let symbol = dlsym(handle, "framework_probe") else { return "Framework unavailable" }
+    let path = Bundle.main.bundleURL
+        .appendingPathComponent("Frameworks/TestFramework.framework/TestFramework")
+        .path
+    guard let handle = dlopen(path, RTLD_NOW),
+          let symbol = dlsym(handle, "$s13TestFramework14frameworkProbes5Int32VyF") else { return "Framework unavailable" }
     typealias Probe = @convention(c) () -> Int32
     let value = unsafeBitCast(symbol, to: Probe.self)()
     return "Framework value: \(value)"
