@@ -59,6 +59,11 @@ def cmd_ipa(args) -> int:
     return 0
 
 
+def cmd_shared(args) -> int:
+    return 0 if ipa.patch_shared_bundle(args.input, args.dylib, args.out,
+                                        do_sign=args.sign_bundle) else 1
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="coldhook",
                                 description="Статический merge-патчер Mach-O (ColdHook)")
@@ -95,6 +100,14 @@ def build_parser() -> argparse.ArgumentParser:
     pb.add_argument("--sign-bundle", action="store_true",
                     help="подписать бинари в бандле (по умолчанию НЕТ — твоя забота)")
     pb.set_defaults(func=cmd_ipa)
+
+    ps = sub.add_parser("shared", help="применить один shared hook-dylib ко всем Mach-O в .app")
+    ps.add_argument("input", help="входной .app-каталог")
+    ps.add_argument("--dylib", required=True, help="общий hook-dylib")
+    ps.add_argument("--out", "-o", required=True, help="выходной .app-каталог")
+    ps.add_argument("--sign-bundle", action="store_true",
+                    help="подписать каждый обработанный Mach-O через ad-hoc codesign")
+    ps.set_defaults(func=cmd_shared)
 
     pt = sub.add_parser("install-theos", help="поставить NIC-шаблон «ColdHook Tweak» в $THEOS")
     pt.add_argument("--theos", help="путь к theos (по умолчанию $THEOS или ~/theos)")

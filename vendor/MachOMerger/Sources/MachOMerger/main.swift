@@ -247,7 +247,13 @@ if coldhookModeArg == "shared" {
             targetData: dataA,
             targetResolver: makeColdhookSymbolResolver(dataA.symtab),
             userHooksData: dataB,
-            userHooksResolver: makeColdhookSymbolResolver(dataB.symtab))
+            userHooksResolver: makeColdhookSymbolResolver(dataB.symtab),
+            targetSelectors: coldhookBinarySelectors(path: coldhookPosArgs[0]))
+        if assembly.plan.hooks.isEmpty {
+            try a.data.write(to: URL(fileURLWithPath: coldhookPosArgs[2]))
+            print("Done! (shared-режим: no applicable hooks)")
+            exit(0)
+        }
         let sharedSections = try makeColdhookSharedSections(assembly.plan)
         let stubSegment = try makeColdhookSharedSegmentCommand(
             name: "__COLDHOOK_TEXT", vmAddr: assembly.plan.layout.stubVMAddr,
@@ -331,7 +337,7 @@ if coldhookModeArg == "shared" {
             if output.count < end { output.append(Data(repeating: 0, count: end - output.count)) }
             output.replaceSubrange(off..<end, with: bytes)
         }
-        for placement in makeColdhookSharedPlacements(assembly.plan) {
+        for placement in try makeColdhookSharedPlacements(assembly.plan, originalTargetData: dataA) {
             let off = placement.fileOffset, end = off + placement.data.count
             if output.count < end { output.append(Data(repeating: 0, count: end - output.count)) }
             output.replaceSubrange(off..<end, with: placement.data)
@@ -342,6 +348,9 @@ if coldhookModeArg == "shared" {
         output.replaceSubrange(0..<limit, with: headerData + Data(repeating: 0, count: limit - headerData.count))
         try output.write(to: URL(fileURLWithPath: coldhookPosArgs[2]))
         print("Done! (shared-режим: \(assembly.plan.hooks.count) hook(s))")
+    } catch ColdhookSharedAssemblerError.noApplicableHooks {
+        try? a.data.write(to: URL(fileURLWithPath: coldhookPosArgs[2]))
+        print("Done! (shared-режим: no applicable hooks)")
     } catch { print("shared: \(error)"); exit(-1) }
     exit(0)
 }

@@ -67,12 +67,14 @@ func sharedColdhookSegmentGrowth(_ targetData: MachOMergeData,
 }
 
 enum ColdhookSharedAssemblerError: Error, CustomStringConvertible {
+    case noApplicableHooks
     case missingSegment(String)
     case targetNotFound(String)
     case payloadNotContiguous(String)
 
     var description: String {
         switch self {
+        case .noApplicableHooks: return "shared: no applicable hooks"
         case .missingSegment(let name): return "shared: target has no \(name) segment"
         case .targetNotFound(let name): return "shared: target locator not found: \(name)"
         case .payloadNotContiguous(let name): return "shared: payload cannot be appended to \(name)"
@@ -86,7 +88,7 @@ enum ColdhookSharedAssemblerError: Error, CustomStringConvertible {
 func materializeColdhookSharedPayload(_ plan: ColdhookSharedTargetPlan,
                                       into targetData: inout MachOMergeData,
                                       originalTargetData: MachOMergeData? = nil) throws {
-    let placements = makeColdhookSharedPlacements(plan)
+    let placements = try makeColdhookSharedPlacements(plan, originalTargetData: originalTargetData)
     for (segmentName, start, end) in [("__TEXT", plan.layout.stubFileOffset,
                                       plan.layout.stubFileOffset + plan.layout.stubSize),
                                      ("__DATA", plan.layout.tableFileOffset,
@@ -118,7 +120,7 @@ func materializeColdhookSharedPayload(_ plan: ColdhookSharedTargetPlan,
                     $0.load(fromByteOffset: sourceOffset, as: UInt32.self)
                 }
                 let origOffset = Int(hook.stub.address - start) + 12
-                let returnBranch = try encodeColdhookB(from: hook.origAddress, to: hook.entryAddress + 4)
+                let returnBranch = try encodeColdhookB(from: hook.origAddress + 4, to: hook.entryAddress + 4)
                 payload.replaceSubrange(origOffset..<(origOffset + 4), with: Data(fromObject: originalInsn))
                 payload.replaceSubrange((origOffset + 4)..<(origOffset + 8), with: Data(fromObject: returnBranch))
             }
@@ -147,15 +149,12 @@ func planColdhookSharedTarget(
     targetData: MachOMergeData,
     targetResolver: ColdhookSymbolResolver,
     userHooksData: MachOMergeData,
-    userHooksResolver: ColdhookSymbolResolver
+    userHooksResolver: ColdhookSymbolResolver,
+    targetSelectors: Set<String> = []
 ) throws -> ColdhookSharedTargetPlan {
-    let declarations = try extractColdhookSharedSpecs(from: userHooksResolver, data: userHooksData)
-    let hookSymbols = userHooksResolver.all(prefix: "_COLDHOOK_").filter {
-        $0.name.hasPrefix("_COLDHOOK_DYN_") || $0.name.hasPrefix("_COLDHOOK_SYM_") || $0.name.hasPrefix("_COLDHOOK_ADDR_")
-    }
-    guard declarations.count == hookSymbols.count else {
-        throw ColdhookSharedAssemblerError.targetNotFound("inconsistent hook declarations")
-    }
+    let declarations = try extractColdhookSharedSpecs(from: userHooksResolver, data: userHooksData,
+                                                       targetSelectors: targetSelectors)
+    if declarations.isEmpty { throw ColdhookSharedAssemblerError.noApplicableHooks }
     guard let text = targetData.segments.first(where: { $0.0.name == "__TEXT" })?.0 else {
         throw ColdhookSharedAssemblerError.missingSegment("__TEXT")
     }
@@ -179,23 +178,14 @@ func planColdhookSharedTarget(
     var finalSpecs: [ColdhookSharedSpec] = []
     var entries: [UInt64] = []
     for (index, declaration) in declarations.enumerated() {
-        let magic = hookSymbols[index]
-        let locator: String
-        if magic.name.hasPrefix("_COLDHOOK_DYN_") {
-            let fields = String(magic.name.dropFirst("_COLDHOOK_DYN_".count)).components(separatedBy: "__CH__")
-            guard fields.count == 3 else {
-                throw ColdhookSharedAssemblerError.targetNotFound("invalid dynamic declaration \(magic.name)")
-            }
-            let value = String(fields[1])
-            locator = value.hasPrefix("COLDHOOK_ADDR_") ? "_" + value : value
-        } else if magic.name.hasPrefix("_COLDHOOK_SYM_") {
-            locator = String(magic.name.dropFirst("_COLDHOOK_SYM_".count))
-        } else {
-            locator = "_COLDHOOK_ADDR_" + String(magic.name.dropFirst("_COLDHOOK_ADDR_".count))
-        }
+        let locator = declaration.kind == .address && !declaration.locator.hasPrefix("_")
+            ? "_" + declaration.locator : declaration.locator
         entries.append(try sharedTargetAddress(locator, resolver: targetResolver))
         let origAddress = layout.stubVMAddr + UInt64(index * 20 + 12)
         finalSpecs.append(ColdhookSharedSpec(
+            kind: declaration.kind,
+            binarySelector: declaration.binarySelector,
+            locator: declaration.locator,
             hookID: declaration.hookID,
             handlerName: declaration.handlerName,
             origImageOffset: origAddress,
@@ -225,12 +215,14 @@ func prepareColdhookSharedTarget(
     targetData: MachOMergeData,
     targetResolver: ColdhookSymbolResolver,
     userHooksData: MachOMergeData,
-    userHooksResolver: ColdhookSymbolResolver
+    userHooksResolver: ColdhookSymbolResolver,
+    targetSelectors: Set<String> = []
 ) throws -> ColdhookSharedAssembly {
     let plan = try planColdhookSharedTarget(targetData: targetData,
                                             targetResolver: targetResolver,
                                             userHooksData: userHooksData,
-                                            userHooksResolver: userHooksResolver)
+                                            userHooksResolver: userHooksResolver,
+                                            targetSelectors: targetSelectors)
     var materialized = targetData
     for hook in plan.hooks {
         guard let index = materialized.segments.firstIndex(where: {
