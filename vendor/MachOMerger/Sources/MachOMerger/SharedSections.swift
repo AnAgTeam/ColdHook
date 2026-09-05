@@ -72,15 +72,8 @@ func makeColdhookSharedSegmentCommand(name: String, vmAddr: UInt64, fileOffset: 
                                       vmSize: UInt64, fileSize: UInt64,
                                       maxProt: Int32, initProt: Int32,
                                       sections: [section_64]) throws -> Data {
-    var command = segment_command_64()
-    command.cmd = UInt32(LC_SEGMENT_64)
-    command.cmdsize = UInt32(MemoryLayout<segment_command_64>.size + sections.count * MemoryLayout<section_64>.size)
-    try writeName(name, into: &command.segname)
-    command.vmaddr = vmAddr; command.vmsize = vmSize
-    command.fileoff = fileOffset; command.filesize = fileSize
-    command.maxprot = maxProt; command.initprot = initProt
-    command.nsects = UInt32(sections.count)
-    var out = Data(fromObject: command)
-    for section in sections { out.appendGeneric(value: section) }
-    return out
+    return try makeAppendedSegmentCommand(name: name, vmAddr: vmAddr,
+                                          fileOffset: fileOffset, vmSize: vmSize,
+                                          fileSize: fileSize, maxProt: maxProt,
+                                          initProt: initProt, sections: sections)
 }
