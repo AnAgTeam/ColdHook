@@ -16,7 +16,7 @@ TEMPLATES = [
     # Public template: shared is the default user-facing workflow.  The older
     # embedded templates remain in-tree for compatibility/tests but are not
     # advertised by NIC installation.
-    ("coldhook-shared", "ColdHook Shared Tweak"),
+    ("coldhook-shared", "iphone/coldhook_tweak"),
 ]
 
 
@@ -62,5 +62,5 @@ def cmd_install_theos(args) -> int:
     print("Шаблоны установлены:")
     for d in dests:
         print(f"  {d}")
-    print("Теперь: nic.pl  ->  «ColdHook Shared Tweak»  ->  make")
+    print("Теперь: nic.pl  ->  «iphone/coldhook_tweak»  ->  make")
     return 0
