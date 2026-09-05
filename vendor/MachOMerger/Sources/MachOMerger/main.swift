@@ -248,6 +248,19 @@ if coldhookModeArg == "shared" {
             targetResolver: makeColdhookSymbolResolver(dataA.symtab),
             userHooksData: dataB,
             userHooksResolver: makeColdhookSymbolResolver(dataB.symtab))
+        let sharedSections = try makeColdhookSharedSections(assembly.plan)
+        let stubSegment = try makeColdhookSharedSegmentCommand(
+            name: "__COLDHOOK_TEXT", vmAddr: assembly.plan.layout.stubVMAddr,
+            fileOffset: assembly.plan.layout.stubFileOffset,
+            vmSize: assembly.plan.layout.stubSize, fileSize: assembly.plan.layout.stubSize,
+            maxProt: VM_PROT_READ | VM_PROT_EXECUTE, initProt: VM_PROT_READ | VM_PROT_EXECUTE,
+            sections: sharedSections["__COLDHOOK_TEXT"] ?? [])
+        let dataSegment = try makeColdhookSharedSegmentCommand(
+            name: "__COLDHOOK_DATA", vmAddr: assembly.plan.layout.tableVMAddr,
+            fileOffset: assembly.plan.layout.tableFileOffset,
+            vmSize: assembly.plan.layout.tableSize, fileSize: assembly.plan.layout.tableSize,
+            maxProt: VM_PROT_READ | VM_PROT_WRITE, initProt: VM_PROT_READ | VM_PROT_WRITE,
+            sections: sharedSections["__COLDHOOK_DATA"] ?? [])
         let (segmentCount, segmentBytes) = generateColdhookSharedSegmentLoadCommands(assembly)
         let aFile = a.data
         guard let linkeditCommand = a.cmds.compactMap({ $0 as? Segment64LoadCommand }).first(where: { $0.name == "__LINKEDIT" }),
@@ -298,8 +311,9 @@ if coldhookModeArg == "shared" {
         linkeditLC.vmsize = UInt64((linkeditBytes.count + 0x3fff) & ~0x3fff)
         linkeditLC.fileoff = UInt64(linkeditOff); linkeditLC.filesize = UInt64(linkeditBytes.count)
         linkeditLC.maxprot = VM_PROT_READ; linkeditLC.initprot = VM_PROT_READ
-        commands.append(Data(fromObject: linkeditLC)); ncmds += 1
         commands.append(segmentBytes); ncmds += segmentCount
+        commands.append(stubSegment); commands.append(dataSegment); ncmds += 2
+        commands.append(Data(fromObject: linkeditLC)); ncmds += 1
         if let dylib = sharedDylibCommand(from: b) { commands.append(dylib); ncmds += 1 }
         var header = mach_header_64(); header.magic = MH_MAGIC_64; header.cputype = CPU_TYPE_ARM64
         header.cpusubtype = Int32(bitPattern: a.cpuSubType); header.filetype = a.filetype.rawValue
@@ -315,6 +329,11 @@ if coldhookModeArg == "shared" {
             let off = Int(command.fileOffset), end = off + bytes.count
             if output.count < end { output.append(Data(repeating: 0, count: end - output.count)) }
             output.replaceSubrange(off..<end, with: bytes)
+        }
+        for placement in makeColdhookSharedPlacements(assembly.plan) {
+            let off = placement.fileOffset, end = off + placement.data.count
+            if output.count < end { output.append(Data(repeating: 0, count: end - output.count)) }
+            output.replaceSubrange(off..<end, with: placement.data)
         }
         if output.count < linkeditOff { output.append(Data(repeating: 0, count: linkeditOff - output.count)) }
         output.append(linkeditBytes)

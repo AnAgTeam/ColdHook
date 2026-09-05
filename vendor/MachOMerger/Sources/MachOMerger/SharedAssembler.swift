@@ -163,11 +163,13 @@ func planColdhookSharedTarget(
 
     // Each hook owns twelve bytes of local veneer and eight bytes of orig code.
     let initialMetadata = emitColdhookSharedMetadata(declarations)
+    let appendVMEnd = targetData.segments.map { $0.0.vmAddr + $0.0.vmSize }.max() ?? (text.vmAddr + text.vmSize)
+    let appendFileEnd = targetData.segments.map { $0.0.fileOffset + $0.0.fileSize }.max() ?? (data.fileOffset + data.fileSize)
     let layout = try planColdhookSharedLayout(
-        executableVMEnd: text.vmAddr + text.vmSize,
-        executableFileEnd: text.fileOffset + text.fileSize,
-        writableVMEnd: data.vmAddr + data.vmSize,
-        writableFileEnd: data.fileOffset + data.fileSize,
+        executableVMEnd: appendVMEnd,
+        executableFileEnd: appendFileEnd,
+        writableVMEnd: appendVMEnd,
+        writableFileEnd: appendFileEnd,
         stubSize: UInt64(declarations.count * 20),
         tableSize: UInt64(initialMetadata.data.count)
     )
@@ -233,12 +235,8 @@ func prepareColdhookSharedTarget(
             throw ColdhookSharedAssemblerError.targetNotFound(String(describing: error))
         }
     }
-    try materializeColdhookSharedPayload(plan, into: &materialized, originalTargetData: targetData)
-    if let i = materialized.segments.firstIndex(where: { $0.0.name == "__DATA" }) {
-        var c = materialized.segments[i].0
-        c.vmSize = max(c.vmSize, plan.layout.tableVMAddr + plan.layout.tableSize - c.vmAddr)
-        materialized.segments[i].0 = c
-    }
+    // Shared payload is emitted as two append segments by the output assembler;
+    // do not extend target __TEXT/__DATA here.
     let sections = try makeColdhookSharedSections(plan)
     // `materializeColdhookSharedPayload` updates the segment command sizes in-place;
     // passing growth again would double-count the synthetic tail in load commands.

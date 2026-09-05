@@ -46,8 +46,10 @@ func planColdhookSharedLayout(
 
     let stubVMAddr = pageAlign(executableVMEnd, pageSize)
     let stubFileOffset = pageAlign(executableFileEnd, pageSize)
-    let tableVMAddr = pageAlign(writableVMEnd, pageSize)
-    let tableFileOffset = pageAlign(writableFileEnd, pageSize)
+    // Append data after the RX stub segment; sharing the same start would make
+    // the two protection domains overlap.
+    let tableVMAddr = pageAlign(stubVMAddr + stubSize, pageSize)
+    let tableFileOffset = pageAlign(stubFileOffset + stubSize, pageSize)
 
     // The stub uses ADRP to address the table slot.  Keep this check here so an
     // assembler cannot accidentally emit an invalid veneer for distant segments.

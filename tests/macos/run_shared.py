@@ -67,6 +67,7 @@ def main():
     sys.stdout.write(result.stdout); sys.stderr.write(result.stderr)
     if result.returncode:
         raise RuntimeError("shared merge failed")
+    check(["codesign", "-f", "-s", "-", merged], "codesign shared output")
     load = subprocess.check_output(["otool", "-l", merged], text=True)
     if "__coldhook" not in load or "libhooks.dylib" not in load:
         raise RuntimeError("shared metadata section or hooks dependency missing")

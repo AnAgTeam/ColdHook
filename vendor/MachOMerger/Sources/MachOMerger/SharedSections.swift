@@ -51,16 +51,36 @@ func makeColdhookSharedSection(_ spec: ColdhookSharedSectionSpec) throws -> sect
 
 func makeColdhookSharedSections(_ plan: ColdhookSharedTargetPlan) throws -> [String: [section_64]] {
     let stub = try makeColdhookSharedSection(ColdhookSharedSectionSpec(
-        segment: "__TEXT", section: "__coldhook_stub",
+        segment: "__COLDHOOK_TEXT", section: "__coldhook_stub",
         address: plan.layout.stubVMAddr, size: plan.layout.stubSize,
         fileOffset: UInt32(plan.layout.stubFileOffset), alignment: 2,
         flags: UInt32(S_REGULAR) | UInt32(S_ATTR_SOME_INSTRUCTIONS) | UInt32(S_ATTR_PURE_INSTRUCTIONS)
     ))
     let table = try makeColdhookSharedSection(ColdhookSharedSectionSpec(
-        segment: "__DATA", section: "__coldhook",
+        segment: "__COLDHOOK_DATA", section: "__coldhook",
         address: plan.layout.tableVMAddr, size: plan.layout.tableSize,
         fileOffset: UInt32(plan.layout.tableFileOffset), alignment: 3,
         flags: UInt32(S_REGULAR)
     ))
-    return ["__TEXT": [stub], "__DATA": [table]]
+    // Code and metadata must not share a RWX segment.  Mach-O maps protection
+    // at segment granularity, so shared append uses two independent segments.
+    return ["__COLDHOOK_TEXT": [stub], "__COLDHOOK_DATA": [table]]
+}
+
+/// Builds an append-style LC_SEGMENT_64 containing synthetic sections.
+func makeColdhookSharedSegmentCommand(name: String, vmAddr: UInt64, fileOffset: UInt64,
+                                      vmSize: UInt64, fileSize: UInt64,
+                                      maxProt: Int32, initProt: Int32,
+                                      sections: [section_64]) throws -> Data {
+    var command = segment_command_64()
+    command.cmd = UInt32(LC_SEGMENT_64)
+    command.cmdsize = UInt32(MemoryLayout<segment_command_64>.size + sections.count * MemoryLayout<section_64>.size)
+    try writeName(name, into: &command.segname)
+    command.vmaddr = vmAddr; command.vmsize = vmSize
+    command.fileoff = fileOffset; command.filesize = fileSize
+    command.maxprot = maxProt; command.initprot = initProt
+    command.nsects = UInt32(sections.count)
+    var out = Data(fromObject: command)
+    for section in sections { out.appendGeneric(value: section) }
+    return out
 }
