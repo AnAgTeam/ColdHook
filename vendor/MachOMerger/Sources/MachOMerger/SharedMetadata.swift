@@ -46,7 +46,8 @@ private func encodeADRP(rd: UInt32, from: UInt64, to: UInt64) -> UInt32 {
 
 private func encodeLDRUnsigned64(rt: UInt32, rn: UInt32, from: UInt64, to: UInt64) -> UInt32 {
     let delta = to - from
-    precondition(delta & 7 == 0 && delta / 8 < 4096, "LDR target out of range")
+    precondition(delta & 7 == 0 && delta / 8 < 4096,
+                 String(format: "LDR target out of range: from=0x%llx to=0x%llx delta=%llu", from, to, delta))
     return 0xf9400000 | (UInt32(delta / 8) << 10) | ((rn & 0x1f) << 5) | (rt & 0x1f)
 }
 
@@ -57,6 +58,7 @@ private func encodeBR(rn: UInt32) -> UInt32 { 0xd61f0000 | ((rn & 0x1f) << 5) }
 func emitColdhookSharedStub(address: UInt64, slotAddress: UInt64) -> ColdhookSharedStub {
     var bytes = Data()
     let adrp = encodeADRP(rd: 16, from: address, to: slotAddress)
+    // ADRP places the slot page in x16; LDR's immediate is page-relative.
     let ldr = encodeLDRUnsigned64(rt: 16, rn: 16, from: slotAddress & ~0xfff,
                                   to: slotAddress)
     bytes.append(Data(fromObject: adrp))
@@ -93,11 +95,13 @@ func emitColdhookSharedMetadata(_ specs: [ColdhookSharedSpec]) -> ColdhookShared
     out.replaceSubrange(20..<24, with: Data(fromObject: UInt32(stringsOffset)))
     out.replaceSubrange(24..<28, with: Data(fromObject: UInt32(strings.count)))
 
+    let slotsOffset = align8(stringsOffset + strings.count)
+    if out.count < slotsOffset { out.append(Data(repeating: 0, count: slotsOffset - out.count)) }
     var slotOffsets: [UInt32] = []
     for (i, spec) in specs.enumerated() {
         var record = Data()
         appendLE(spec.hookID, to: &record)
-        let slotOffset = stringsOffset + strings.count + i * 8
+        let slotOffset = slotsOffset + i * 8
         slotOffsets.append(UInt32(slotOffset))
         appendLE(UInt32(slotOffset), to: &record)
         appendLE(UInt32(0), to: &record)

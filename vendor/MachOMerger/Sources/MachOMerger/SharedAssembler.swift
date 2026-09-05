@@ -133,7 +133,8 @@ func materializeColdhookSharedPayload(_ plan: ColdhookSharedTargetPlan,
 private func sharedTargetAddress(_ locator: String,
                                  resolver: ColdhookSymbolResolver) throws -> UInt64 {
     if let magic = getMagicSymbolVal(locator) { return magic.0 }
-    guard let symbol = resolver.first(locator, definedOnly: true) else {
+    guard let symbol = resolver.first(locator, definedOnly: true)
+        ?? resolver.first("_" + locator, definedOnly: true) else {
         throw ColdhookSharedAssemblerError.targetNotFound(locator)
     }
     return symbol.value
