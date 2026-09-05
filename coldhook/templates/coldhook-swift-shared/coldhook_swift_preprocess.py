@@ -5,7 +5,7 @@ import re, shutil, sys
 src = Path(sys.argv[1]); out = Path(sys.argv[2]); glue = Path(sys.argv[3])
 pat = re.compile(r'@ColdHookMangled\(\s*binary:\s*"([^"]+)"\s*,\s*target:\s*"([^"]+)"\s*\)')
 func_pat = re.compile(r'(?P<prefix>(?:public\s+|internal\s+|private\s+|fileprivate\s+|)func\s+)'
-                       r'(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*(?P<sig>\([^\{]+\)\s*(?:->\s*[^\{]+)?)\s*\{')
+                       r'(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*(?P<sig>\([^\{]*\)\s*(?:->\s*[^\{]+)?)\s*\{')
 found = []
 for p in sorted(src.rglob('*.swift')):
     text = p.read_text()
