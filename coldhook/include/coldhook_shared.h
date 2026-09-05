@@ -41,6 +41,12 @@ struct coldhook_shared_record {
 // Returns NULL until the corresponding target image has been processed.
 void *coldhook_shared_orig_lookup(uint64_t hook_id);
 
+// Public runtime lookup: returns the original implementation for a generated
+// hook function address (&my_hook), or NULL when the target image is not ready.
+void *coldhook_shared_find_orig(void *hook);
+uint32_t coldhook_runtime_version(void);
+const char *coldhook_last_error(void);
+
 #if defined(__cplusplus)
 static_assert(sizeof(coldhook_shared_table) == 28, "ColdHook shared table ABI changed");
 static_assert(sizeof(coldhook_shared_record) == 40, "ColdHook shared record ABI changed");

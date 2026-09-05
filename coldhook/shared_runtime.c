@@ -17,12 +17,14 @@
 
 struct orig_entry {
     uint64_t key;
+    void *handler;
     void *address;
     struct orig_entry *next;
 };
 
 static pthread_mutex_t g_orig_lock = PTHREAD_MUTEX_INITIALIZER;
 static struct orig_entry *g_orig_entries;
+static _Thread_local const char *g_last_error;
 
 void *coldhook_shared_orig_lookup(uint64_t hook_id) {
     pthread_mutex_lock(&g_orig_lock);
@@ -37,11 +39,28 @@ void *coldhook_shared_orig_lookup(uint64_t hook_id) {
     return NULL;
 }
 
-static void register_orig(uint64_t key, void *address) {
+void *coldhook_shared_find_orig(void *hook) {
+    pthread_mutex_lock(&g_orig_lock);
+    for (struct orig_entry *e = g_orig_entries; e; e = e->next) {
+        if (e->handler == hook) {
+            void *address = e->address;
+            pthread_mutex_unlock(&g_orig_lock);
+            return address;
+        }
+    }
+    pthread_mutex_unlock(&g_orig_lock);
+    return NULL;
+}
+
+uint32_t coldhook_runtime_version(void) { return 1; }
+const char *coldhook_last_error(void) { return g_last_error; }
+
+static void register_orig(uint64_t key, void *handler, void *address) {
     if (key == 0 || address == NULL) return;
     pthread_mutex_lock(&g_orig_lock);
     for (struct orig_entry *e = g_orig_entries; e; e = e->next) {
         if (e->key == key) {
+            e->handler = handler;
             e->address = address;
             pthread_mutex_unlock(&g_orig_lock);
             return;
@@ -50,6 +69,7 @@ static void register_orig(uint64_t key, void *address) {
     struct orig_entry *e = (struct orig_entry *)malloc(sizeof(*e));
     if (e) {
         e->key = key;
+        e->handler = handler;
         e->address = address;
         e->next = g_orig_entries;
         g_orig_entries = e;
@@ -129,7 +149,12 @@ static void process_image(const struct mach_header *header, intptr_t slide) {
                 }
                 __atomic_store_n(dispatch, orig, __ATOMIC_RELEASE);
             }
-            register_orig(record->orig_slot_key ? record->orig_slot_key : record->hook_id, orig);
+            const char *handler_base = name;
+            if (strncmp(handler_base, "coldhook_gate_", 14) == 0)
+                handler_base += 14;
+            void *public_handler = dlsym(RTLD_DEFAULT, handler_base);
+            register_orig(record->orig_slot_key ? record->orig_slot_key : record->hook_id,
+                          public_handler ? public_handler : handler, orig);
         }
     }
 }
@@ -152,4 +177,7 @@ void *coldhook_shared_orig_lookup(uint64_t hook_id) {
     (void)hook_id;
     return NULL;
 }
+void *coldhook_shared_find_orig(void *hook) { (void)hook; return NULL; }
+uint32_t coldhook_runtime_version(void) { return 1; }
+const char *coldhook_last_error(void) { return NULL; }
 #endif
