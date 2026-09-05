@@ -1,4 +1,5 @@
 #import <Foundation/Foundation.h>
+#include <coldhook_shared.h>
 
 // Shared hook: binary selector is explicit and stored in the hook dylib metadata.
 %hookf_shared("MainBinary", const char *, domain_for, int env) {

@@ -1,7 +1,29 @@
 # @@PROJECTNAME@@
 
 Shared ColdHook Logos template. `%hookf_shared` is translated by the ColdHook prepass
-to `CH_DYN_SYM`/`CH_DYN_ADDR` declarations with an explicit binary selector.
+to `CH_DYN_SYM`/`CH_DYN_ADDR` declarations with an explicit binary selector. The
+`coldhook_shared.h` ABI header is included by the template, while `coldhook.h` is
+inserted automatically by the prepass.
+
+The hook dylib must link the universal bootstrap runtime. Set its location before
+building (the default is `/usr/local/lib`):
+
+```bash
+make COLDHOOK_RUNTIME_DIR=/path/to/runtime
+```
+
+The directory must contain `libcoldhook.dylib`.
+
+Supported forms:
+
+```logos
+%hookf_shared("Binary", ret, symbol, args...) { ... }
+%hookf_shared("Binary", ret, 0x1234, args...) { ... }
+```
+
+`%orig` is available through the generated `coldhook_orig_*` trampoline. A shared
+hook inside `%group` is converted to the gated dynamic form and is enabled by the
+usual `%init(Group)`.
 
 ```bash
 make
