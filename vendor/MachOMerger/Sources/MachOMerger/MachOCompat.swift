@@ -5,6 +5,16 @@
 
 import Foundation
 
+@inline(__always)
+func setMachOName<T>(_ field: inout T, _ value: String) {
+    withUnsafeMutableBytes(of: &field) { raw in
+        raw.initializeMemory(as: UInt8.self, repeating: 0)
+        for (index, byte) in value.utf8.prefix(raw.count - 1).enumerated() {
+            raw[index] = byte
+        }
+    }
+}
+
 let MH_MAGIC_64: UInt32 = 0xfeedfacf
 let CPU_TYPE_ARM64: UInt32 = 0x0100000c
 let CPU_TYPE_X86_64: UInt32 = 0x01000007

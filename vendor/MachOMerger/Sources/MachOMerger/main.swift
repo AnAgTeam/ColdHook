@@ -361,7 +361,7 @@ if coldhookModeArg == "shared" {
         }
         var linkeditLC = segment_command_64(); linkeditLC.cmd = UInt32(LC_SEGMENT_64)
         linkeditLC.cmdsize = UInt32(MemoryLayout<segment_command_64>.size)
-        _ = withUnsafeMutableBytes(of: &linkeditLC.segname) { strcpy($0.baseAddress!, "__LINKEDIT") }
+        setMachOName(&linkeditLC.segname, "__LINKEDIT")
 		let vmEnd = assembly.targetData.segments.map { $0.0.vmAddr + $0.0.vmSize }.max() ?? 0
 		// The newly synthesized segments are not part of targetData.segments.
 		// Include their reserved VM ranges before placing __LINKEDIT; otherwise
@@ -950,7 +950,7 @@ func coldhookAppendAssemble(targetDataInput: MachOMergeData = dataA,
         slc.cmd = UInt32(LC_SEGMENT_64)
         let nsects = part.origCommand.sections.count
         slc.cmdsize = UInt32(MemoryLayout<segment_command_64>.size + nsects * MemoryLayout<section_64>.size)
-        _ = withUnsafeMutableBytes(of: &slc.segname) { strcpy($0.baseAddress!, entry.0) }
+        setMachOName(&slc.segname, entry.0)
         slc.vmaddr   = newVM
         slc.vmsize   = part.origCommand.vmSize
         slc.fileoff  = UInt64(fileOff)
@@ -967,8 +967,8 @@ func coldhookAppendAssemble(targetDataInput: MachOMergeData = dataA,
         var sectionData: [section_64] = []
         for sect in part.origCommand.sections {
             var s = section_64()
-            _ = withUnsafeMutableBytes(of: &s.sectname) { strcpy($0.baseAddress!, sect.section) }
-            _ = withUnsafeMutableBytes(of: &s.segname)  { strcpy($0.baseAddress!, entry.0) }
+            setMachOName(&s.sectname, sect.section)
+            setMachOName(&s.segname, entry.0)
             s.addr   = sect.address &+ part.offset
             s.size   = sect.size
             s.offset = (sect.offset == 0) ? 0 : UInt32(s.addr &- coldhookBase)
@@ -1026,7 +1026,7 @@ func coldhookAppendAssemble(targetDataInput: MachOMergeData = dataA,
     var leSeg = segment_command_64()
     leSeg.cmd = UInt32(LC_SEGMENT_64)
     leSeg.cmdsize = UInt32(MemoryLayout<segment_command_64>.size)
-    _ = withUnsafeMutableBytes(of: &leSeg.segname) { strcpy($0.baseAddress!, "__LINKEDIT") }
+    setMachOName(&leSeg.segname, "__LINKEDIT")
     // vmaddr linkedit развязан от файлового офсета: кладём ЗА максимальный VM-конец сегментов B.
     // Слайд по сегментам может отличаться (vmaddr-fileoff не обязан быть константой), а у B-данных
     // bss даёт vmsize > filesize — без этого __BDATA по VM налезал на __LINKEDIT ('vm range overlaps').
@@ -1175,9 +1175,7 @@ let lastSegment = (lastSegments.1.count == 1) ? lastSegments.1[0] : lastSegments
 var linkeditLC = segment_command_64()
 linkeditLC.cmd = UInt32(LC_SEGMENT_64)
 linkeditLC.cmdsize = UInt32(MemoryLayout<segment_command_64>.size)
-_ = withUnsafeMutableBytes(of: &linkeditLC.segname) { ptr in
-    strcpy(ptr.baseAddress!, "__LINKEDIT")
-}
+setMachOName(&linkeditLC.segname, "__LINKEDIT")
 linkeditLC.vmaddr = lastSegment.origCommand.vmAddr + lastSegment.offset + lastSegment.origCommand.vmSize
 linkeditLC.vmsize = UInt64(linkedit.count)
 // ColdHook: fileoff linkedit = сразу после machOData (+0x4000 заголовок). Через vmaddr-offset
