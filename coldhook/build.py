@@ -8,8 +8,10 @@ import tempfile
 from . import macho, toolchain
 from .config import Config, Signing, Target
 
-C_CYAN, C_RED, C_GREEN, C_YELL, C_RST = (
+_USE_COLOR = os.name != "nt" and not os.environ.get("NO_COLOR")
+C_CYAN, C_RED, C_GREEN, C_YELL, C_RST = ((
     "\033[1;36m", "\033[1;31m", "\033[1;32m", "\033[1;33m", "\033[0m")
+    if _USE_COLOR else ("", "", "", "", ""))
 
 
 INCLUDE_DIR = os.path.join(os.path.dirname(__file__), "include")  # где лежит coldhook.h

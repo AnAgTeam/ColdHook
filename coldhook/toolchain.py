@@ -20,7 +20,11 @@ class ToolError(RuntimeError):
 
 
 def _run(cmd: list[str], what: str) -> None:
-    p = subprocess.run(cmd, capture_output=True, text=True)
+    try:
+        p = subprocess.run(cmd, capture_output=True, text=True)
+    except OSError as exc:
+        raise ToolError(f"{what}: не удалось запустить {' '.join(cmd)}: {exc}. "
+                        "Проверь COLDHOOK_MERGER и DLL Swift runtime рядом с MachOMerger.exe") from exc
     if p.returncode != 0:
         raise ToolError(f"{what} упало (код {p.returncode}):\n"
                         f"  cmd: {' '.join(cmd)}\n"
@@ -29,13 +33,14 @@ def _run(cmd: list[str], what: str) -> None:
 
 def ensure_merger() -> str:
     # A release can ship MachOMerger(.exe) next to the Python package.
-    candidates = [MERGER,
+    configured = os.environ.get("COLDHOOK_MERGER")
+    candidates = ([os.path.abspath(configured)] if configured else []) + [MERGER,
                   os.path.join(ROOT, "bin", _merger_name),
                   os.path.join(os.path.dirname(__file__), _merger_name)]
     for candidate in candidates:
         if os.path.isfile(candidate) and (os.name == "nt" or os.access(candidate, os.X_OK)):
             return candidate
-    if not os.access(MERGER, os.X_OK):
+    if not os.path.isfile(MERGER):
         raise ToolError(
             f"MachOMerger не собран: {MERGER}\n"
             f"  собери: (cd vendor/MachOMerger && swift build -c release)")

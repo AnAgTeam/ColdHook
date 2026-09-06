@@ -38,11 +38,19 @@ jobs:
       - name: Build release executable
         shell: pwsh
         run: swift build --package-path vendor/MachOMerger -c release
+      - name: Bundle Swift runtime DLLs
+        shell: pwsh
+        run: |
+          $stage = "windows-artifact"
+          New-Item -ItemType Directory -Force $stage | Out-Null
+          Copy-Item vendor/MachOMerger/.build/release/MachOMerger.exe $stage
+          $swiftBin = Split-Path (Get-Command swift).Source
+          Get-ChildItem $swiftBin -Filter *.dll | Copy-Item -Destination $stage -Force
       - name: Upload MachOMerger
         uses: actions/upload-artifact@v4
         with:
           name: MachOMerger-windows-x86_64
-          path: vendor/MachOMerger/.build/release/MachOMerger.exe
+          path: windows-artifact/
 
   python-wheel:
     name: Python wheel
