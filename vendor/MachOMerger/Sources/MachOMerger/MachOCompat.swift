@@ -74,6 +74,12 @@ struct symtab_command {
     var nsyms: UInt32 = 0; var stroff: UInt32 = 0; var strsize: UInt32 = 0
 }
 
+struct uuid_command {
+    var cmd: UInt32 = 0
+    var cmdsize: UInt32 = 0
+    var uuid: uuid_t = (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
+}
+
 struct dysymtab_command {
     var cmd: UInt32 = 0; var cmdsize: UInt32 = 0
     var ilocalsym: UInt32 = 0; var nlocalsym: UInt32 = 0
