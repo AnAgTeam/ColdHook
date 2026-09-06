@@ -7,6 +7,7 @@ import Foundation
 
 let MH_MAGIC_64: UInt32 = 0xfeedfacf
 let CPU_TYPE_ARM64: UInt32 = 0x0100000c
+let CPU_TYPE_X86_64: UInt32 = 0x01000007
 
 let LC_SEGMENT_64: UInt32 = 0x19
 let LC_SYMTAB: UInt32 = 0x2
@@ -45,6 +46,41 @@ let LC_UNIXTHREAD: UInt32 = 0x5
 let VM_PROT_READ: Int32 = 1
 let VM_PROT_WRITE: Int32 = 2
 let VM_PROT_EXECUTE: Int32 = 4
+
+let S_REGULAR: UInt32 = 0x0
+let S_ATTR_PURE_INSTRUCTIONS: UInt32 = 0x80000000
+let S_ATTR_SOME_INSTRUCTIONS: UInt32 = 0x00000400
+let ARM_THREAD_STATE64: UInt32 = 6
+
+struct nlist_64 {
+    struct StringIndex { var n_strx: UInt32 = 0 }
+    var n_un = StringIndex()
+    var n_type: UInt8 = 0; var n_sect: UInt8 = 0; var n_desc: UInt16 = 0
+    var n_value: UInt64 = 0
+}
+
+struct symtab_command {
+    var cmd: UInt32 = 0; var cmdsize: UInt32 = 0; var symoff: UInt32 = 0
+    var nsyms: UInt32 = 0; var stroff: UInt32 = 0; var strsize: UInt32 = 0
+}
+
+struct dysymtab_command {
+    var cmd: UInt32 = 0; var cmdsize: UInt32 = 0
+    var ilocalsym: UInt32 = 0; var nlocalsym: UInt32 = 0
+    var iextdefsym: UInt32 = 0; var nextdefsym: UInt32 = 0
+    var iundefsym: UInt32 = 0; var nundefsym: UInt32 = 0
+    var tocoff: UInt32 = 0; var ntoc: UInt32 = 0; var modtaboff: UInt32 = 0; var nmodtab: UInt32 = 0
+    var extrefsymoff: UInt32 = 0; var nextrefsyms: UInt32 = 0
+    var indirectsymoff: UInt32 = 0; var nindirectsyms: UInt32 = 0
+    var extreloff: UInt32 = 0; var nextrel: UInt32 = 0; var locreloff: UInt32 = 0; var nlocrel: UInt32 = 0
+}
+
+// arm_thread_state64_t is 34 words (272 bytes). Only __pc is interpreted.
+struct arm_thread_state64_t {
+    var x = (UInt64(0),UInt64(0),UInt64(0),UInt64(0),UInt64(0),UInt64(0),UInt64(0),UInt64(0),UInt64(0),UInt64(0),UInt64(0),UInt64(0),UInt64(0),UInt64(0),UInt64(0),UInt64(0),UInt64(0),UInt64(0),UInt64(0),UInt64(0),UInt64(0),UInt64(0),UInt64(0),UInt64(0),UInt64(0),UInt64(0),UInt64(0),UInt64(0),UInt64(0))
+    var fp: UInt64 = 0; var lr: UInt64 = 0; var sp: UInt64 = 0; var __pc: UInt64 = 0
+    var cpsr: UInt32 = 0; var pad: UInt32 = 0
+}
 
 struct mach_header_64 {
     var magic: UInt32 = 0; var cputype: UInt32 = 0; var cpusubtype: Int32 = 0
