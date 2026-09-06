@@ -43,14 +43,34 @@ jobs:
         run: |
           $stage = "windows-artifact"
           New-Item -ItemType Directory -Force $stage | Out-Null
-          Copy-Item vendor/MachOMerger/.build/release/MachOMerger.exe $stage
+          $exe = Join-Path $stage "MachOMerger.exe"
+          Copy-Item vendor/MachOMerger/.build/release/MachOMerger.exe $exe
           $swiftBin = Split-Path (Get-Command swift).Source
-          Get-ChildItem $swiftBin -Filter *.dll | Copy-Item -Destination $stage -Force
+          $dumpbin = (Get-ChildItem "$env:ProgramFiles\Microsoft Visual Studio\2022" -Filter dumpbin.exe -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1).FullName
+          if (-not $dumpbin) { throw "dumpbin.exe not found" }
+          $queue = [System.Collections.Generic.Queue[string]]::new()
+          $queue.Enqueue($exe)
+          $seen = [System.Collections.Generic.HashSet[string]]::new()
+          while ($queue.Count -gt 0) {
+            $current = $queue.Dequeue()
+            if (-not $seen.Add($current)) { continue }
+            $deps = & $dumpbin /DEPENDENTS $current 2>$null
+            foreach ($match in ($deps | Select-String -Pattern '^\s+([A-Za-z0-9_.-]+\.dll)\s*$')) {
+              $name = $match.Matches[0].Groups[1].Value
+              $candidate = Join-Path $swiftBin $name
+              if (Test-Path $candidate) {
+                $dest = Join-Path $stage $name
+                if (-not (Test-Path $dest)) { Copy-Item $candidate $dest }
+                $queue.Enqueue($candidate)
+              }
+            }
+          }
+          Compress-Archive -Path "$stage\*" -DestinationPath "MachOMerger-windows-x86_64.zip" -CompressionLevel Optimal
       - name: Upload MachOMerger
         uses: actions/upload-artifact@v4
         with:
           name: MachOMerger-windows-x86_64
-          path: windows-artifact/
+          path: MachOMerger-windows-x86_64.zip
 
   python-wheel:
     name: Python wheel
