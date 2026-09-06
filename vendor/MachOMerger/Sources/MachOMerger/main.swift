@@ -7,7 +7,6 @@
 
 import Foundation
 import SwiftMachO
-import MachO
 
 typealias SegRelocInfo = [(String, [(isB: Bool, origCommand: Segment64LoadCommand, data: Data, offset: UInt64)])]
 
@@ -51,8 +50,8 @@ guard coldhookPosArgs.count == 3 else {
     exit(-1)
 }
 
-let a = try MachO(fromFile: coldhookPosArgs[0], okToLoadFAT: false)
-let b = try MachO(fromFile: coldhookPosArgs[1], okToLoadFAT: false)
+let a = try loadMachO(coldhookPosArgs[0])
+let b = try loadMachO(coldhookPosArgs[1])
 
 var newMachO = Data()
 
@@ -270,7 +269,7 @@ if coldhookModeArg == "shared" {
             userHooksResolver: makeColdhookSymbolResolver(dataB.symtab),
             targetSelectors: coldhookBinarySelectors(path: coldhookPosArgs[0]))
         if assembly.plan.hooks.isEmpty {
-            try a.data.write(to: URL(fileURLWithPath: coldhookPosArgs[2]))
+            try writeMachO(a.data, to: coldhookPosArgs[2])
             print("Done! (shared-режим: no applicable hooks)")
             exit(0)
         }
@@ -405,10 +404,10 @@ if coldhookModeArg == "shared" {
         output.append(linkeditBytes)
         // __TEXT's segment bytes include the old header; install the new header last.
         output.replaceSubrange(0..<limit, with: headerData + Data(repeating: 0, count: limit - headerData.count))
-        try output.write(to: URL(fileURLWithPath: coldhookPosArgs[2]))
+        try writeMachO(output, to: coldhookPosArgs[2])
         print("Done! (shared-режим: \(assembly.plan.hooks.count) hook(s))")
     } catch ColdhookSharedAssemblerError.noApplicableHooks {
-        try? a.data.write(to: URL(fileURLWithPath: coldhookPosArgs[2]))
+        try? writeMachO(a.data, to: coldhookPosArgs[2])
         print("Done! (shared-режим: no applicable hooks)")
     } catch { print("shared: \(error)"); exit(-1) }
     exit(0)
@@ -1092,7 +1091,7 @@ func coldhookAppendAssemble(targetDataInput: MachOMergeData = dataA,
 
 if coldhookAppendMode {
     let out = coldhookAppendAssemble()
-    try out.write(to: URL(fileURLWithPath: coldhookPosArgs[2]))
+    try writeMachO(out, to: coldhookPosArgs[2])
     print("Done! (append-режим: таргет на месте, хук аппендом)")
     exit(0)
 }
@@ -1221,7 +1220,7 @@ let out = assembleColdhookMachO(ColdhookMachOOutputPayload(
     linkedit: linkedit
 ))
 
-try out.write(to: URL(fileURLWithPath: coldhookPosArgs[2]))
+try writeMachO(out, to: coldhookPosArgs[2])
 
 /*let resMachO = try MachO(out)
 

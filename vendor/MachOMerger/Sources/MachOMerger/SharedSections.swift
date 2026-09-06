@@ -1,6 +1,5 @@
 // Mach-O section/segment command helpers for shared mode.
 import Foundation
-import MachO
 
 struct ColdhookSharedSectionSpec {
     let segment: String

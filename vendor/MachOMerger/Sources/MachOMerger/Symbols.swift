@@ -6,7 +6,6 @@
 //
 
 import Foundation
-import MachO
 
 func extractSymbols(info: MachOMergeData) -> ([nlist_64]) {
     let syms = info.symtab?.symbols

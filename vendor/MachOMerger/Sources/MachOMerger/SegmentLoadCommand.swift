@@ -6,7 +6,6 @@
 //
 
 import Foundation
-import MachO
 
 func generateSegmentLoadCommands(infoA: MachOMergeData, infoB: MachOMergeData, relocInfo: RelocInfo,
                                  extraSections: [String: [section_64]] = [:],
