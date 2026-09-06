@@ -30,6 +30,11 @@ jobs:
         with:
           swift-version: swift-6.2-release
           swift-build: 6.2-RELEASE
+      - name: Resolve and patch SwiftMachO for Windows
+        shell: pwsh
+        run: |
+          swift package resolve --package-path vendor/MachOMerger
+          ./scripts/patch_swiftmacho_windows.ps1
       - name: Build release executable
         shell: pwsh
         run: swift build --package-path vendor/MachOMerger -c release
