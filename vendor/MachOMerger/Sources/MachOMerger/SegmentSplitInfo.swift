@@ -6,9 +6,17 @@
 //
 
 import Foundation
-import PatchfinderUtils
 import SwiftMachO
-import MachO
+
+// Minimal AArch64 ADRP emulator. PatchfinderUtils previously provided this
+// single operation but is Darwin-platform constrained despite being pure Swift.
+private func emulateADRP(_ instruction: UInt32, pc: UInt64) -> UInt64 {
+    let immlo = (instruction >> 29) & 0x3
+    let immhi = (instruction >> 5) & 0x7ffff
+    var imm = (immhi << 2) | immlo
+    if (imm & 0x100000) != 0 { imm |= 0xffe00000 }
+    return (pc & ~0xfff) &+ UInt64(bitPattern: Int64(Int32(bitPattern: imm)) << 12)
+}
 
 func pStr(_ p: UInt64) -> String {
     String(format: "%p", p)
@@ -31,7 +39,7 @@ func ssiFixAdrp(adrp: UInt32, at: UInt64, to: UInt64) -> UInt32 {
     
     let instruction = (adrp & 0x9F00001F) | UInt32((pageDistance & 0x1FFFFC) << 3) | UInt32((pageDistance & 0x3) << 29)
     
-    guard AArch64Instr.Emulate.adrp(instruction, pc: at) == (to & ~0xFFF) else {
+    guard emulateADRP(instruction, pc: at) == (to & ~0xFFF) else {
         print("ssiFixAdrp: Generated wrong adrp!")
         exit(-1)
     }

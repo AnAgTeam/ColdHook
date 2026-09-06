@@ -6,7 +6,6 @@
 //
 
 import Foundation
-import MachO
 
 func emitUnixthread(info: MachOMergeData, relocInfo: RelocInfo, isB: Bool) -> (Int, Data) {
     let ths = info.unixthread!

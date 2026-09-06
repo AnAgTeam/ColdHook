@@ -1,6 +1,5 @@
 // Shared backend orchestration, deliberately split into planning and emission.
 import Foundation
-import MachO
 
 struct ColdhookSharedHookPlan {
     let entryAddress: UInt64

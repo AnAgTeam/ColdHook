@@ -7,7 +7,6 @@
 
 import Foundation
 import SwiftMachO
-import MachO
 
 // ColdHook: разобранная import-запись chained fixups (SwiftMachO отдаёт только имена,
 // а нам нужны lib_ordinal/weak для ремапа dylib-ordinals при merge внешних импортов B).

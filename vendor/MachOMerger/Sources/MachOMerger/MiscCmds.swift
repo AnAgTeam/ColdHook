@@ -6,7 +6,6 @@
 //
 
 import Foundation
-import MachO
 
 func emitUUIDCmd() -> (Int, Data) {
     let cmd = uuid_command(cmd: UInt32(LC_UUID), cmdsize: UInt32(MemoryLayout<uuid_command>.size), uuid: UUID().uuid)

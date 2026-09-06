@@ -1,5 +1,4 @@
 import Foundation
-import MachO
 
 /// Common builder for append-style segments used by append and shared modes.
 func makeAppendedSegmentCommand(name: String, vmAddr: UInt64, fileOffset: UInt64,
