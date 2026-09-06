@@ -8,8 +8,7 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))
 MERGER = os.path.join(ROOT, "vendor", "MachOMerger", ".build", "release", "MachOMerger")
-RUNTIME = "/tmp/libcoldhook.dylib"
-BUILD = os.path.join(HERE, "build_shared_mode")
+BUILD = os.path.join(HERE, "build", "shared_mode")
 
 def run(cmd, **kw):
     print("  $ " + " ".join(cmd), flush=True)
@@ -30,6 +29,7 @@ def main():
     target = os.path.join(BUILD, "libtarget.dylib")
     other_target = os.path.join(BUILD, "libother.dylib")
     other_merged = os.path.join(BUILD, "libother.shared.dylib")
+    runtime = os.path.join(BUILD, "libcoldhook.dylib")
     hooks = os.path.join(BUILD, "libhooks.dylib")
     merged = os.path.join(BUILD, "libtarget.shared.dylib")
     driver = os.path.join(BUILD, "driver")
@@ -56,12 +56,15 @@ def main():
                 '  if (coldhook_orig_domain_for_hook(n)[0] != \'O\') return "BAD-ORIG";\n'
                 '  return "SHARED-HOOK";\n}\n')
     with open(hooks_src, "a") as f:
-        f.write('CH_DYN_SYM_GATED("libtarget", "domain_for", domain_for_hook);\n'
+        # The shared backend matches a target by its filename.  Keep the
+        # selector aligned with libtarget.dylib, while libother.dylib below
+        # exercises the intentional no-op path.
+        f.write('CH_DYN_SYM_GATED("libtarget.dylib", "domain_for", domain_for_hook);\n'
                 'CH_DECLARE_ORIG(other_for_hook, const char *, int);\n'
                 '__attribute__((visibility("default"))) const char *other_for_hook(int n){\n'
                 '  if (coldhook_orig_other_for_hook(n)[0] != \'O\') return "BAD-OTHER-ORIG";\n'
                 '  return "OTHER-HOOK";\n}\n'
-                'CH_DYN_SYM("libtarget", "other_for", other_for_hook);\n')
+                'CH_DYN_SYM("libtarget.dylib", "other_for", other_for_hook);\n')
     with open(driver_src, "w") as f:
         f.write('#include <dlfcn.h>\n#include <stdio.h>\n'
                 'int main(int c,char**v){void*h=dlopen(v[1],RTLD_NOW);'
@@ -71,10 +74,17 @@ def main():
                 'printf("domain_for=%s\\n",fn(0));return 0;}\n')
 
     split = ["-Wl,-fixup_chains", "-Xlinker", "-add_split_seg_info"]
+    # Build the runtime beside the fixture.  This makes the harness independent
+    # of an unrelated /tmp/libcoldhook.dylib (which may be absent or built for
+    # iOS rather than macOS).
+    check(cc("-dynamiclib", "-I", os.path.join(ROOT, "coldhook", "include"),
+             "-install_name", "@loader_path/libcoldhook.dylib",
+             "-o", runtime, os.path.join(ROOT, "coldhook", "shared_runtime.c")),
+          "shared runtime build")
     check(cc("-dynamiclib", *split, "-Wl,-headerpad,0x4000", "-install_name", "@loader_path/libtarget.dylib",
               "-o", target, target_src), "target build")
     check(cc("-dynamiclib", *split, "-I", os.path.join(ROOT, "coldhook", "include"),
-              "-L", "/tmp", "-lcoldhook", "-Wl,-rpath,/tmp",
+              "-L", BUILD, "-lcoldhook",
               "-Wl,-not_for_dyld_shared_cache",
               "-install_name", "@loader_path/libhooks.dylib", "-o", hooks, hooks_src),
           "hooks build")

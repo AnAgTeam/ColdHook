@@ -23,7 +23,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))
 MERGER = os.path.join(ROOT, "vendor", "MachOMerger", ".build", "release", "MachOMerger")
 INCLUDE = os.path.join(ROOT, "coldhook", "include")
-BUILD = os.path.join(HERE, "build_swift")
+BUILD = os.path.join(HERE, "build", "swift")
 TGT = ["-O", "-target", "arm64-apple-macos13"]
 CY, RD, GR, RST = "\033[1;36m", "\033[1;31m", "\033[1;32m", "\033[0m"
 

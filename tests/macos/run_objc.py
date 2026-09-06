@@ -22,7 +22,7 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))
 MERGER = os.path.join(ROOT, "vendor", "MachOMerger", ".build", "release", "MachOMerger")
-BUILD = os.path.join(HERE, "build_objc")
+BUILD = os.path.join(HERE, "build", "objc")
 SPLIT = ["-Wl,-fixup_chains", "-Xlinker", "-add_split_seg_info"]
 CY, RD, GR, RST = "\033[1;36m", "\033[1;31m", "\033[1;32m", "\033[0m"
 
