@@ -47,14 +47,21 @@ jobs:
           Copy-Item vendor/MachOMerger/.build/release/MachOMerger.exe $exe
           $swiftBin = Split-Path (Get-Command swift).Source
           $swiftRoot = Split-Path $swiftBin
+          $searchRoots = @($swiftRoot, (Split-Path $swiftRoot), "$env:LOCALAPPDATA\Programs\Swift", "$env:RUNNER_TOOL_CACHE\Swift") | Where-Object { Test-Path $_ }
           $dllIndex = @{}
-          Get-ChildItem $swiftRoot -Filter *.dll -Recurse -File | ForEach-Object {
+          Get-ChildItem $searchRoots -Filter *.dll -Recurse -File -ErrorAction SilentlyContinue | ForEach-Object {
             if (-not $dllIndex.ContainsKey($_.Name.ToLowerInvariant())) { $dllIndex[$_.Name.ToLowerInvariant()] = $_.FullName }
+          }
+          $foundation = Get-ChildItem $searchRoots -Filter Foundation.dll -Recurse -File -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $foundation) { throw "Foundation.dll not found in Swift toolchain" }
+          Get-ChildItem $foundation.Directory.FullName -Filter *.dll -File | ForEach-Object {
+            Copy-Item $_.FullName (Join-Path $stage $_.Name) -Force
           }
           $dumpbin = (Get-ChildItem "$env:ProgramFiles\Microsoft Visual Studio\2022" -Filter dumpbin.exe -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1).FullName
           if (-not $dumpbin) { throw "dumpbin.exe not found" }
           $queue = [System.Collections.Generic.Queue[string]]::new()
           $queue.Enqueue($exe)
+          Get-ChildItem $stage -Filter *.dll -File | ForEach-Object { $queue.Enqueue($_.FullName) }
           $seen = [System.Collections.Generic.HashSet[string]]::new()
           while ($queue.Count -gt 0) {
             $current = $queue.Dequeue()
@@ -70,6 +77,8 @@ jobs:
               }
             }
           }
+          Write-Host "Bundled DLLs:"
+          Get-ChildItem $stage -Filter *.dll | ForEach-Object { Write-Host "  $($_.Name)" }
       - name: Upload MachOMerger
         uses: actions/upload-artifact@v4
         with:
