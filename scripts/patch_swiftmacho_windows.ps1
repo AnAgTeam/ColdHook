@@ -6,6 +6,12 @@ if (-not (Test-Path $checkout)) {
     throw "SwiftMachO checkout not found: $checkout"
 }
 
+# SwiftPM's git checkout can inherit the read-only attribute on Windows.
+# Clear it explicitly before applying the small compatibility edits below.
+Get-ChildItem -LiteralPath $checkout -Recurse -File | ForEach-Object {
+    if ($_.IsReadOnly) { $_.IsReadOnly = $false }
+}
+
 # SwiftMachO's FAT.bestArch() references an Apple SDK constant which is not
 # exposed by the Windows SDK. The wire value is part of the Mach-O format.
 $fat = Join-Path $checkout 'Sources\SwiftMachO\MachO\FAT\FAT.swift'
