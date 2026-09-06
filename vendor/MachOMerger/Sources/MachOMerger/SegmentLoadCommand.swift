@@ -31,9 +31,7 @@ func generateSegmentLoadCommands(infoA: MachOMergeData, infoB: MachOMergeData, r
         var slc = segment_command_64()
         slc.cmd = UInt32(LC_SEGMENT_64)
         slc.cmdsize = UInt32(MemoryLayout<segment_command_64>.size + (MemoryLayout<section_64>.size * sects))
-        _ = withUnsafeMutableBytes(of: &slc.segname) { ptr in
-            strcpy(ptr.baseAddress!, seg.0)
-        }
+        setMachOName(&slc.segname, seg.0)
 
         if seg.0 == "__PAGEZERO" {
             // ColdHook: вербатим — vmaddr 0, vmsize 4ГБ, без файлового контента, prot 0.
@@ -90,12 +88,8 @@ func generateSegmentLoadCommands(infoA: MachOMergeData, infoB: MachOMergeData, r
         var sectsData = Data()
         for sect in seg.1[0].origCommand.sections {
             var sectLC = section_64()
-            _ = withUnsafeMutableBytes(of: &sectLC.sectname) { ptr in
-                strcpy(ptr.baseAddress!, sect.section)
-            }
-            _ = withUnsafeMutableBytes(of: &sectLC.segname) { ptr in
-                strcpy(ptr.baseAddress!, seg.0)
-            }
+            setMachOName(&sectLC.sectname, sect.section)
+            setMachOName(&sectLC.segname, seg.0)
             
             sectLC.addr = sect.address + seg.1[0].offset
             sectLC.size = sect.size
@@ -124,20 +118,8 @@ func generateSegmentLoadCommands(infoA: MachOMergeData, infoB: MachOMergeData, r
         if seg.1.count > 1 {
             for sect in seg.1[1].origCommand.sections {
                 var sectLC = section_64()
-                _ = withUnsafeMutableBytes(of: &sectLC.sectname) { ptr in
-                    if sect.section != "__jbinfo" {
-                        // Special case, "__DATA:__jbinfo" section should not be appended with "_2"
-                        // Ideally I would have added a check here to only add _2 if the section already exists in file a
-                        // But then again this is Swift
-                        strcpy(ptr.baseAddress!, sect.section + "_2")
-                    }
-                    else {
-                        strcpy(ptr.baseAddress!, sect.section)
-                    }
-                }
-                _ = withUnsafeMutableBytes(of: &sectLC.segname) { ptr in
-                    strcpy(ptr.baseAddress!, seg.0)
-                }
+                setMachOName(&sectLC.sectname, sect.section == "__jbinfo" ? sect.section : sect.section + "_2")
+                setMachOName(&sectLC.segname, seg.0)
                 
                 sectLC.addr = sect.address + seg.1[1].offset
                 sectLC.size = sect.size
