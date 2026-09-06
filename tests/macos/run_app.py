@@ -15,7 +15,7 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))
-BUILD = os.path.join(HERE, "build_app")
+BUILD = os.path.join(HERE, "build", "app")
 LDFLAGS = ["-Wl,-fixup_chains", "-Xlinker", "-add_split_seg_info"]
 CY, RD, GR, YL, RST = "\033[1;36m", "\033[1;31m", "\033[1;32m", "\033[1;33m", "\033[0m"
 
