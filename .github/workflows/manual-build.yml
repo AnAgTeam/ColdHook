@@ -46,6 +46,11 @@ jobs:
           $exe = Join-Path $stage "MachOMerger.exe"
           Copy-Item vendor/MachOMerger/.build/release/MachOMerger.exe $exe
           $swiftBin = Split-Path (Get-Command swift).Source
+          $swiftRoot = Split-Path $swiftBin
+          $dllIndex = @{}
+          Get-ChildItem $swiftRoot -Filter *.dll -Recurse -File | ForEach-Object {
+            if (-not $dllIndex.ContainsKey($_.Name.ToLowerInvariant())) { $dllIndex[$_.Name.ToLowerInvariant()] = $_.FullName }
+          }
           $dumpbin = (Get-ChildItem "$env:ProgramFiles\Microsoft Visual Studio\2022" -Filter dumpbin.exe -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1).FullName
           if (-not $dumpbin) { throw "dumpbin.exe not found" }
           $queue = [System.Collections.Generic.Queue[string]]::new()
@@ -55,22 +60,21 @@ jobs:
             $current = $queue.Dequeue()
             if (-not $seen.Add($current)) { continue }
             $deps = & $dumpbin /DEPENDENTS $current 2>$null
-            foreach ($match in ($deps | Select-String -Pattern '^\s+([A-Za-z0-9_.-]+\.dll)\s*$')) {
+            foreach ($match in ($deps | Select-String -Pattern '([A-Za-z0-9_.-]+\.dll)')) {
               $name = $match.Matches[0].Groups[1].Value
-              $candidate = Join-Path $swiftBin $name
-              if (Test-Path $candidate) {
+              $candidate = $dllIndex[$name.ToLowerInvariant()]
+              if ($candidate) {
                 $dest = Join-Path $stage $name
                 if (-not (Test-Path $dest)) { Copy-Item $candidate $dest }
                 $queue.Enqueue($candidate)
               }
             }
           }
-          Compress-Archive -Path "$stage\*" -DestinationPath "MachOMerger-windows-x86_64.zip" -CompressionLevel Optimal
       - name: Upload MachOMerger
         uses: actions/upload-artifact@v4
         with:
           name: MachOMerger-windows-x86_64
-          path: MachOMerger-windows-x86_64.zip
+          path: windows-artifact/
 
   python-wheel:
     name: Python wheel
