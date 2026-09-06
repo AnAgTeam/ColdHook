@@ -2,13 +2,29 @@
 .build/
 vendor/MachOMerger/.build/
 
+# Python build/test output
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+dist/
+build/
+*.egg-info/
+.venv/
+venv/
+env/
+ENV/
+*.profraw
+
 # Локальные сборки харнесса
 tests/macos/build/
 tests/macos/build_*/
-
-# Python
-__pycache__/
-*.pyc
 
 # local secrets / real identifiers — never commit
 .coldhook.env
@@ -21,3 +37,8 @@ build_device/
 
 # macOS
 .DS_Store
+
+# Xcode / SwiftPM local state
+**/xcuserdata/
+**/.swiftpm/
+*.xcuserstate

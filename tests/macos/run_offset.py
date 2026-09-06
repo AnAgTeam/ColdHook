@@ -64,14 +64,19 @@ def main():
     # Хук-функция и ORIG-трамплин адресуют цель ТОЛЬКО по оффсету (символа нет в имени).
     with open(hook_c, "w") as f:
         f.write(f"""#include <unistd.h>
-const char *MACHOMERGER_HOOK_{tag}(int env);
-extern const char *MACHOMERGER_ORIG_{tag}(int env);
-void *const g_hook_self = (void *)MACHOMERGER_HOOK_{tag};
+extern const char *coldhook_orig_fix_domain(int env);
+const char *fix_domain(int env);
+void *const g_hook_self = (void *)fix_domain;
 __attribute__((visibility("default")))
-const char *MACHOMERGER_HOOK_{tag}(int env) {{
+const char *fix_domain(int env) {{
     if (env == 99) return "https://hooked.by.offset";   // чиним провальный путь
-    return MACHOMERGER_ORIG_{tag}(env);                   // известное -> в оригинал
+    return coldhook_orig_fix_domain(env);                // известное -> в оригинал
 }}
+__asm__(".text\\n.p2align 2\\n"
+        ".globl _COLDHOOK_ADDR_{off:x}\\n_COLDHOOK_ADDR_{off:x}:\\n    b _fix_domain\\n"
+        ".globl _COLDHOOK_ORIG_ADDR_{off:x}\\n_COLDHOOK_ORIG_ADDR_{off:x}:\\n    brk #0\\n"
+        ".globl _COLDHOOK_TRAMPOLINE_ADDR_{off:x}\\n_COLDHOOK_TRAMPOLINE_ADDR_{off:x}:\\n    brk #0\\n"
+        ".globl _coldhook_orig_fix_domain\\n_coldhook_orig_fix_domain:\\n    b _COLDHOOK_ORIG_ADDR_{off:x}\\n");
 """)
     with open(stub_s, "w") as f:
         f.write(f""".text

@@ -9,7 +9,7 @@ sys.path.insert(0, str(ROOT))
 from coldhook.logos_prepass import prepass
 
 
-def main():
+def test_shared_template_contract():
     root = ROOT
     template = root / "coldhook" / "templates" / "coldhook-shared"
     makefile = (template / "Makefile").read_text()
@@ -32,6 +32,10 @@ def main():
     assert 'CH_DYN_ADDR("MainBinary", 0x1234, _chf_addr_1234);' in out
     assert 'CH_DYN_SYM_GATED("MainBinary", "grouped", _chf_grouped);' in out
     assert 'coldhook_disp__chf_grouped = (void*)&_chf_grouped;' in out
+
+
+def main():
+    test_shared_template_contract()
     print("OK: shared Logos template + symbol/address/group/orig contract")
 
 

@@ -75,9 +75,9 @@ This installs only the ColdHook NIC templates into an existing `$THEOS`; it does
 
 ### Windows
 
-Shared-patching already-built thin Mach-O files requires the ColdHook Python package (which installs cross-platform `lief`), `MachOMerger.exe`, a built `userhooks.dylib`, and `libcoldhook.dylib`. `coldhook shared` does not require `coldhook.toml`: selectors are read from the hook dylib export trie and bundles are packed with Python's built-in `zipfile`.
+`coldhook shared` is supported on Windows for already-built **thin Mach-O** files. You need the ColdHook Python package (with cross-platform `lief`), `MachOMerger.exe`, a built `userhooks.dylib`, and `libcoldhook.dylib`. `coldhook shared` does not require `coldhook.toml`: selectors are read from the hook dylib export trie, and `.app`/`.ipa` bundles are unpacked and repacked with Python's built-in `zipfile`.
 
-Configuration-based `patch`/`ipa` and FAT handling still require Apple's `lipo`/`otool`; building hook code also remains a macOS/Theos/Xcode task. Re-sign the result on Windows with the sideload tool appropriate for your workflow.
+Windows limitations: shared mode does not perform FAT slicing automatically; configuration-based `patch`/`ipa` and FAT handling require Apple's `lipo`/`otool`, while building hook code remains a macOS/Theos/Xcode task. Re-sign the bundle on Windows with the sideload tool appropriate for your workflow.
 
 ## Usage
 
