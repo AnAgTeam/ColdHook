@@ -6,9 +6,11 @@ to `CH_DYN_SYM`/`CH_DYN_ADDR` declarations with an explicit binary selector. The
 inserted automatically by the prepass.
 
 This template assumes an existing Theos installation (`$THEOS`, including
-`$THEOS/bin/logos.pl`). `coldhook install-theos` installs the template only; it does not
-install Theos or Logos. The `coldhook-logos` prepass is supplied by the ColdHook Python
-package and is run automatically by `make`.
+`$THEOS/bin/logos.pl`) and an installed ColdHook Python package. From the ColdHook checkout,
+run `python3 -m pip install -e .` so that `coldhook-logos` is on `PATH`; then run
+`python3 -m coldhook install-theos`. The latter installs the template only; it does not
+install Theos, Logos, or the Python package. The `coldhook-logos` prepass is then run
+automatically by `make`.
 
 The hook dylib must link the universal bootstrap runtime. Set its location before
 building (the default is `/usr/local/lib`):

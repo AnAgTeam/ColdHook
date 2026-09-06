@@ -6,6 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "coldhook"
 version = "0.1.0"
 description = "ColdHook static Mach-O hook tooling"
+dependencies = ["lief>=0.17"]
 
 [project.scripts]
 coldhook-logos = "coldhook.logos_prepass:main"
