@@ -9,12 +9,14 @@ PRE = ROOT / "coldhook/templates/coldhook-swift-shared/coldhook_swift_preprocess
 def main():
     with tempfile.TemporaryDirectory(prefix="coldhook_swift_offset_") as td:
         root = Path(td); src = root / "Sources"; src.mkdir(); out = root / "out"; glue = root / "Tweak.m"
+        env = dict(os.environ, CLANG_MODULE_CACHE_PATH=str(root / "ModuleCache"),
+                   SWIFT_MODULECACHE_PATH=str(root / "ModuleCache"))
         target = root / "target"
         swift = src / "Target.swift"
-        swift.write_text('''@inline(never) public func pick(_ x: Int) -> String {\n  if x == 0 { return "ZERO" }; return "NZ:\\(x)"\n}\n''')
-        subprocess.run(["xcrun", "swiftc", "-target", "arm64-apple-macos13", str(swift), "-o", str(target)], check=True)
+        swift.write_text('''@inline(never) public func pick(_ x: Int) -> String {\n  if x == 0 { return "ZERO" }; return "NZ:\\(x)"\n}\nprint(pick(1))\n''')
+        subprocess.run(["xcrun", "swiftc", "-target", "arm64-apple-macos13", str(swift), "-o", str(target)], check=True, env=env)
         nm = subprocess.check_output(["nm", str(target)], text=True)
-        m = next((re.match(r"([0-9a-fA-F]+)\\s+\\S+\\s+.*pick", line) for line in nm.splitlines() if "pick" in line), None)
+        m = next((re.match(r"([0-9a-fA-F]+)\s+\S+\s+.*pick", line) for line in nm.splitlines() if "pick" in line), None)
         if not m: raise RuntimeError("target Swift symbol not found")
         offset = "0x" + m.group(1)
         hook = src / "Hook.swift"
