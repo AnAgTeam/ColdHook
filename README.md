@@ -1,43 +1,57 @@
 # ColdHook
 
-ColdHook статически патчит Mach-O-бинари iOS/macOS: код хука сливается с приложением на этапе сборки, без jailbreak runtime-патчинга и W^X-переходов. Например, для sideload.
+ColdHook statically patches Mach-O binaries for iOS and macOS by merging hook code into the target at build time. It is designed for sideloaded apps, where jailbreak-style runtime patching is unavailable.
 
-## Зачем
+Русская версия: [README.ru.md](README.ru.md).
 
-В sideload без джейлбрейка нельзя патчить код в рантайме — в частности, использовать
-`MSHookFunction` (`%hookf`). При этом `MSHookMessage` для Objective-C остаётся рабочим.
-ColdHook позволяет удобно патчить функции не в рантайме, а статически, на этапе сборки.
-Swift-код практически всегда статичен, поэтому обычный Logos-подход в sideload для него
-почти бессилен; ColdHook закрывает этот пробел статическими хуками по mangled-имени или адресу.
+## Why
 
-Поддерживаются:
+On a non-jailbroken sideloaded app, runtime code patching such as `MSHookFunction` (`%hookf`) is generally unavailable, while Objective-C message swizzling may still work. ColdHook applies hooks statically during the build, including hooks for Swift functions that are normally statically dispatched.
 
-- хуки по символу (`CH_HOOK_SYM`);
-- хуки по адресу/смещению (`CH_HOOK_ADDR`) для stripped-бинарей;
-- `ORIG` для вызова оригинальной функции;
-- shared-режим — одна hook dylib для приложения и его framework-ов;
-- Logos `%hookf`, `%ctor`, `%group` и ObjC-свизл;
-- Swift hooks по mangled имени или адресу;
-- FAT Mach-O с обработкой arm64/arm64e-слайсов в обычной команде `merge`/`patch`;
-- патчинг `.app` и `.ipa` с последующей переподписью.
+### How it compares
 
-Внутренняя схема сегментов, таблицы shared-режима, bootstrap, relocation и ограничения Mach-O описаны в [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+| Solution | Jailbreak required | Works with sideloading | Native Swift hooks | Works at runtime? | Source code required |
+|---|:---:|:---:|:---:|:---:|:---:|
+| **ColdHook** | No | Yes | Yes | No | No |
+| Frida Gadget | No* | Yes | Yes, with a debugger/JIT or jailbreak | Yes* | No |
+| ElleKit / Substrate | Usually | Limited | Yes, with a debugger/JIT or jailbreak | Yes | No |
+| Objective-C swizzling | No | Yes | Only `@objc` methods | Yes | No |
+| SwiftHook | No | Own app only | ObjC-visible Swift methods only | Yes | Yes |
 
-## Быстрый старт
+`*` Frida's `Interceptor` has restrictions on jailed iOS when no debugger is attached. The table describes typical use; exact compatibility depends on the iOS version, signing method, symbols, and ABI.
 
-### Вариант 1: готовый релиз
+SwiftHook is a library linked into the app itself. It changes dispatch for methods exposed to the Objective-C runtime (for example, `@objc dynamic` methods); it is not an injector for arbitrary native Swift functions in an already-built IPA.
 
-Для обычного использования достаточно скачать из GitHub Release:
+**ColdHook's advantage:** it can replace native Swift functions in a sideloaded bundle without a jailbreak, attached debugger, or runtime JIT. **Trade-off:** hooks are chosen and applied before installation; they cannot be attached, detached, or changed while the app is running. Updating the target app normally requires rebuilding, patching, and re-signing the bundle again.
 
-- бинарь `MachOMerger` для macOS;
-- Python-пакет/скрипт `coldhook`;
-- runtime `libcoldhook.dylib` для shared-режима.
+Supported features:
 
-Положи `MachOMerger` в `vendor/MachOMerger/.build/release/` либо укажи путь через переменные окружения проекта. После этого можно сразу запускать команды ниже — локальная сборка Swift не требуется.
+- symbol hooks (`CH_HOOK_SYM`);
+- address/offset hooks (`CH_HOOK_ADDR`) for stripped binaries;
+- `ORIG` calls to the original implementation;
+- shared mode: one hook dylib for an app and its frameworks;
+- Logos `%hookf`, `%ctor`, `%group`, and Objective-C swizzling;
+- Swift hooks by mangled name or address;
+- FAT Mach-O files with arm64/arm64e slice handling in `merge`/`patch`;
+- patching `.app` and `.ipa` bundles, followed by re-signing.
 
-### Вариант 2: сборка из исходников
+The segment layout, shared-mode tables, bootstrap, relocations, and Mach-O limitations are documented in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
-Собрать MachOMerger:
+## Quick start
+
+### Option 1: release artifacts
+
+Download these artifacts from a GitHub release:
+
+- the macOS `MachOMerger` binary;
+- the ColdHook Python package/CLI;
+- `libcoldhook.dylib` for shared mode.
+
+Put `MachOMerger` in `vendor/MachOMerger/.build/release/`, or set the project environment variables to point to it. No local Swift build is required afterwards.
+
+### Option 2: build from source
+
+Build MachOMerger:
 
 ```bash
 cd vendor/MachOMerger
@@ -45,39 +59,29 @@ swift build -c release
 cd ../..
 ```
 
-Python-зависимости для CLI устанавливаются стандартным способом проекта. Для Theos-шаблонов
-отдельно выполни `python3 -m coldhook install-theos`. Эта команда ставит только NIC-шаблоны
-ColdHook в уже установленный `$THEOS`; сам Theos и его `logos.pl` она не устанавливает.
-
-Чтобы команда `coldhook-logos` была доступна shared Logos-шаблону из `make`, сначала установи
-сам Python-пакет (из корня checkout):
+Install the Python package from the checkout root:
 
 ```bash
 python3 -m pip install -e .
 ```
 
-После этого выполни `python3 -m coldhook install-theos`. `install-theos` сам пакет через pip не
-устанавливает.
+For Theos templates, run:
 
-Итого для сборки шаблонов нужны обе зависимости: установленный Python с пакетом ColdHook и
-установленный Theos (`$THEOS`, включая `logos.pl`, makefiles и clang/Swift toolchain). Python
-нужен также во время `make`: Logos-шаблон запускает `coldhook-logos`, а Swift-шаблон запускает
-встроенный `coldhook_swift_preprocess.py`.
+```bash
+python3 -m coldhook install-theos
+```
+
+This installs only the ColdHook NIC templates into an existing `$THEOS`; it does not install Theos or `logos.pl`. Building the templates requires Python with ColdHook installed, Theos (including `logos.pl`, makefiles, and clang/Swift toolchains), and Xcode/Swift on macOS.
 
 ### Windows
 
-Для shared-патчинга уже собранных thin Mach-O достаточно Python-пакета ColdHook (он ставит
-кроссплатформенный `lief`), `MachOMerger.exe`, готового `userhooks.dylib` и
-`libcoldhook.dylib`. Команда `coldhook shared` не требует `coldhook.toml`: selectors читаются
-из export trie hook-dylib, а bundle упаковывается встроенным Python `zipfile`.
+Shared-patching already-built thin Mach-O files requires the ColdHook Python package (which installs cross-platform `lief`), `MachOMerger.exe`, a built `userhooks.dylib`, and `libcoldhook.dylib`. `coldhook shared` does not require `coldhook.toml`: selectors are read from the hook dylib export trie and bundles are packed with Python's built-in `zipfile`.
 
-Статические `patch`/`ipa` по конфигурации и FAT-обработка пока требуют Apple-инструменты
-`lipo`/`otool`; сборка hook-кода также остаётся задачей macOS/Theos/Xcode. Подпись на Windows
-выполняется отдельным sideload-инструментом после патчинга.
+Configuration-based `patch`/`ipa` and FAT handling still require Apple's `lipo`/`otool`; building hook code also remains a macOS/Theos/Xcode task. Re-sign the result on Windows with the sideload tool appropriate for your workflow.
 
-### Использование
+## Usage
 
-Одиночный merge:
+Single merge:
 
 ```bash
 python3 -m coldhook merge \
@@ -86,7 +90,7 @@ python3 -m coldhook merge \
   --out Target.patched
 ```
 
-Патчинг IPA/app по конфигу:
+Patch an IPA/app from a config:
 
 ```bash
 python3 -m coldhook ipa input.ipa \
@@ -94,7 +98,7 @@ python3 -m coldhook ipa input.ipa \
   --out output.ipa
 ```
 
-Shared-режим:
+Shared mode:
 
 ```bash
 python3 -m coldhook shared input.ipa \
@@ -104,12 +108,9 @@ python3 -m coldhook shared input.ipa \
   --verbose
 ```
 
-Для тестовых bundle с неподдерживаемыми служебными Mach-O можно добавить `--skip-unsupported`.
-Команда `shared` не выполняет FAT-слайсинг автоматически и рассчитана на thin Mach-O.
+Use `--skip-unsupported` for test bundles containing unsupported auxiliary Mach-O files. `shared` expects thin Mach-O files and does not perform FAT slicing automatically.
 
-Подпись по умолчанию не выполняется для `ipa`. При `--sign-bundle` подписываются обработанные
-target-бинари; добавленные shared hook/runtime dylib нужно подписать отдельно перед подписью
-самого app способом, подходящим для конкретного sideload-инструмента.
+IPA signing is disabled by default. With `--sign-bundle`, processed target binaries are signed; added shared hook/runtime dylibs must be signed separately before signing the app using the method required by your sideload tool.
 
 ## C/Objective-C API
 
@@ -126,7 +127,7 @@ const char *my_domain_for(int env) {
 CH_HOOK_SYM("domain_for", my_domain_for);
 ```
 
-Для stripped-функции используется адрес/смещение:
+For a stripped function, use an address/offset:
 
 ```c
 CH_DECLARE_ORIG(fix_domain, const char *, int);
@@ -136,7 +137,7 @@ const char *fix_domain(int env) {
 CH_HOOK_ADDR(0xb99a8, fix_domain);
 ```
 
-Гейтируемый вариант по умолчанию вызывает оригинал и включается из конструктора:
+Gated hooks call the original by default and can be enabled from a constructor:
 
 ```c
 CH_DECLARE_GATE(fix_domain);
@@ -149,32 +150,20 @@ __attribute__((constructor)) static void init(void) {
 
 ## Logos
 
-Установка шаблонов Theos:
+Install the templates:
 
 ```bash
 python3 -m coldhook install-theos
 $THEOS/bin/nic.pl
 ```
 
-В меню выбери `iphone/coldhook_tweak` для Logos/Objective-C или `iphone/coldhook_tweak_swift` для Swift. После создания проекта обычные `make`/`make package` остаются Theos-командами.
+Choose `iphone/coldhook_tweak` for Logos/Objective-C or `iphone/coldhook_tweak_swift` for Swift. Normal Theos `make` and `make package` commands remain unchanged.
 
-Для Logos нужен установленный Theos с `$THEOS/bin/logos.pl`: ColdHook запускает собственный
-Python-пре-пасс, который переводит `%hookf`/`%hookf_shared` в статические декларации, а
-оставшиеся `%hook`, `%ctor` и `%group` обрабатывает штатный `logos.pl`. Отдельно ставить
-«препроцессор ColdHook» не нужно — он входит в Python-пакет (`coldhook-logos`), но при установке
-пакета как CLI-команды должен быть доступен в `PATH`.
+Logos requires an existing Theos installation with `$THEOS/bin/logos.pl`. ColdHook's Python prepass translates `%hookf`/`%hookf_shared` into static declarations; the standard `logos.pl` handles the remaining `%hook`, `%ctor`, and `%group` directives. The prepass is included in the Python package as `coldhook-logos`.
 
-Swift-шаблон не использует Swift macros и отдельный Swift-препроцессор. В проект уже входит
-`coldhook_swift_preprocess.py`; `make` запускает его автоматически, генерирует glue и затем
-Theos компилирует Swift-код обычным Swift-компилятором. Поэтому нужны Theos и Xcode/Swift
-(сборка Swift остаётся macOS-зависимой), но вручную устанавливать Swift macro toolchain не надо.
+The Swift template includes `coldhook_swift_preprocess.py`; `make` runs it automatically, generates glue, and lets Theos compile the Swift code with the normal Swift compiler. No separate Swift macro toolchain is required.
 
-Публичные shared-шаблоны (`coldhook-shared` и `coldhook-swift-shared`) не привязаны к checkout
-ColdHook: первый вызывает `coldhook-logos` из `PATH`, второй содержит свой Python-препроцессор.
-Старые embedded-шаблоны (`coldhook-tweak` и `coldhook-swift-tweak`) при генерации NIC получают
-абсолютный путь к текущему checkout ColdHook и привязаны к его месту установки.
-
-В `Tweak.x` можно использовать привычный Logos:
+Example:
 
 ```logos
 %hookf(const char *, domain_for, int env) {
@@ -187,7 +176,7 @@ ColdHook: первый вызывает `coldhook-logos` из `PATH`, второ
 }
 ```
 
-Для shared-режима:
+Shared mode:
 
 ```logos
 %hookf_shared("TestSwiftApp", const char *, domain_for, int env) {
@@ -195,11 +184,9 @@ ColdHook: первый вызывает `coldhook-logos` из `PATH`, второ
 }
 ```
 
-`make` генерирует hook dylib, а `coldhook shared` применяет её к подходящим бинарям bundle. `%group` переводится в gated-механику и активируется через `%init(Group)`.
-
 ## Swift
 
-Swift-функция должна сохранять ABI оригинала:
+The replacement must preserve the original ABI:
 
 ```swift
 import Foundation
@@ -214,7 +201,7 @@ public func url(for domain: String) -> String {
 }
 ```
 
-Для shared Swift используется декларация с бинарём и mangled target:
+For shared Swift, specify the binary and mangled target:
 
 ```swift
 @ColdHookMangled(
@@ -226,25 +213,21 @@ public func url(for domain: String) -> String {
 }
 ```
 
-Готовый Theos-шаблон Swift устанавливается той же командой `install-theos`, после чего запускается `$THEOS/bin/nic.pl` с выбором `iphone/coldhook_tweak_swift`. Glue-код и экспортные объявления генерируются автоматически.
+Use `install-theos` and select `iphone/coldhook_tweak_swift`; glue and export declarations are generated automatically.
 
-## Тестовое приложение
+## Test app
 
-`tests/TestSwiftApp` — SwiftUI-приложение с отдельным `TestFramework`. В репозитории есть end-to-end runner для iOS Simulator:
+`tests/TestSwiftApp` is a SwiftUI app with a separate `TestFramework`. The repository includes an end-to-end iOS Simulator runner:
 
 ```bash
 python3 tests/simulator/run_shared.py \
   --udid <SIMULATOR_UDID>
 ```
 
-Он собирает приложение, создаёт shared hook dylib и runtime, патчит main binary и framework, устанавливает bundle в simulator и запускает один UI-тест. Тест проверяет:
+It builds the app, creates the shared hook dylib and runtime, patches the main binary and framework, installs the bundle in the simulator, and runs a UI test covering app and framework Swift hooks.
 
-- замену Swift-функций в основном приложении;
-- shared hook внутри framework;
-- вызов patched-функции через UI.
+Local macOS fixtures are in `tests/macos/`; C/Swift examples are in `tests/hooks/`.
 
-Локальные macOS-полигоны находятся в `tests/macos/`, C/Swift-примеры — в `tests/hooks/`.
+## License
 
-## Лицензия
-
-Проект распространяется под MIT. Лицензии vendored-компонентов находятся в `vendor/`.
+ColdHook is released under the MIT license. Licenses for vendored components are in `vendor/`.
