@@ -18,22 +18,48 @@ from . import build
 from .build import C_CYAN, C_GREEN, C_RST, PatchError
 from .config import Config
 
+try:
+    import lief
+except ImportError:  # pragma: no cover - dependency is declared in pyproject.toml
+    lief = None
+
 
 def _shared_hook_descriptions(dylib: str) -> list[str]:
-    """Read linker metadata names without requiring a Mach-O parser here."""
+    """Read shared selector metadata from the dylib's exported symbols."""
+    if lief is not None:
+        try:
+            parsed = lief.MachO.parse(dylib)
+            images = [parsed] if hasattr(parsed, "exported_symbols") else list(parsed)
+            result = []
+            for image in images:
+                for symbol in image.exported_symbols:
+                    name = symbol.name
+                    if not name.startswith("_COLDHOOK_DYN_"):
+                        continue
+                    fields = name[len("_COLDHOOK_DYN_"):].split("__CH__")
+                    if len(fields) == 3:
+                        kind_selector = fields[0].split("_", 1)
+                        if len(kind_selector) == 2 and kind_selector[1]:
+                            result.append(f"{kind_selector[1]}:{fields[1]}")
+            return list(dict.fromkeys(result))
+        except Exception:
+            # Keep the macOS command-line fallback for old/partial installs.
+            pass
     try:
         p = subprocess.run(["nm", "-a", dylib], capture_output=True, text=True)
     except OSError:
         return []
     result = []
-    marker = "_COLDHOOK_DYN_SYM_"
+    marker = "_COLDHOOK_DYN_"
     for line in p.stdout.splitlines():
         if marker not in line:
             continue
         name = line[line.index(marker) + len(marker):].split()[0]
         fields = name.split("__CH__")
         if len(fields) >= 3:
-            result.append(f"{fields[0]}:{fields[1]}")
+            kind_selector = fields[0].split("_", 1)
+            if len(kind_selector) == 2:
+                result.append(f"{kind_selector[1]}:{fields[1]}")
     return list(dict.fromkeys(result))
 
 
@@ -57,9 +83,7 @@ def _validate_shared_selectors(app: str, dylib: str) -> None:
     for root, _, files in os.walk(app):
         for name in files:
             path = os.path.join(root, name)
-            try:
-                build.macho.inspect(path)
-            except Exception:
+            if not build.macho.is_macho(path):
                 continue
             real = os.path.realpath(path)
             if real in seen_real:
@@ -240,9 +264,7 @@ def patch_shared_bundle(inp: str, dylib: str, out: str, do_sign: bool = False,
                         or (bundled_dylib and os.path.realpath(target) == os.path.realpath(bundled_dylib))
                         or os.path.realpath(target) == os.path.realpath(runtime_dest)):
                     continue
-                try:
-                    build.macho.inspect(target)
-                except Exception:
+                if not build.macho.is_macho(target):
                     continue
                 merged = target + ".coldhook"
                 before = open(target, "rb").read() if verbose else None

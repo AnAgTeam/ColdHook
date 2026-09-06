@@ -49,6 +49,16 @@ Python-зависимости для CLI устанавливаются стан
 отдельно выполни `python3 -m coldhook install-theos`. Эта команда ставит только NIC-шаблоны
 ColdHook в уже установленный `$THEOS`; сам Theos и его `logos.pl` она не устанавливает.
 
+Чтобы команда `coldhook-logos` была доступна shared Logos-шаблону из `make`, сначала установи
+сам Python-пакет (из корня checkout):
+
+```bash
+python3 -m pip install -e .
+```
+
+После этого выполни `python3 -m coldhook install-theos`. `install-theos` сам пакет через pip не
+устанавливает.
+
 Итого для сборки шаблонов нужны обе зависимости: установленный Python с пакетом ColdHook и
 установленный Theos (`$THEOS`, включая `logos.pl`, makefiles и clang/Swift toolchain). Python
 нужен также во время `make`: Logos-шаблон запускает `coldhook-logos`, а Swift-шаблон запускает
@@ -56,10 +66,14 @@ ColdHook в уже установленный `$THEOS`; сам Theos и его `
 
 ### Windows
 
-Упаковка IPA использует встроенный Python `zipfile`, но текущий CLI для анализа и merge
-требует `lipo`/`otool` (а сборка hook-кода — `xcrun clang`). Поэтому полноценный офлайн-патчинг
-из готовых артефактов на Windows пока не поддерживается; Windows-вариант `MachOMerger.exe`
-сам по себе недостаточен.
+Для shared-патчинга уже собранных thin Mach-O достаточно Python-пакета ColdHook (он ставит
+кроссплатформенный `lief`), `MachOMerger.exe`, готового `userhooks.dylib` и
+`libcoldhook.dylib`. Команда `coldhook shared` не требует `coldhook.toml`: selectors читаются
+из export trie hook-dylib, а bundle упаковывается встроенным Python `zipfile`.
+
+Статические `patch`/`ipa` по конфигурации и FAT-обработка пока требуют Apple-инструменты
+`lipo`/`otool`; сборка hook-кода также остаётся задачей macOS/Theos/Xcode. Подпись на Windows
+выполняется отдельным sideload-инструментом после патчинга.
 
 ### Использование
 

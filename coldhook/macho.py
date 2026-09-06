@@ -9,6 +9,11 @@ import re
 import subprocess
 from dataclasses import dataclass, field
 
+try:
+    import lief
+except ImportError:  # pragma: no cover - only for legacy installations
+    lief = None
+
 
 @dataclass
 class MachOInfo:
@@ -42,6 +47,11 @@ def _run(cmd: list[str]) -> str:
 
 
 def is_macho(path: str) -> bool:
+    if lief is not None:
+        try:
+            return lief.MachO.parse(path) is not None
+        except Exception:
+            return False
     out = subprocess.run(["lipo", "-archs", path], capture_output=True, text=True)
     return out.returncode == 0
 
