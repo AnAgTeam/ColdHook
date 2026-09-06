@@ -268,6 +268,17 @@ python3 tests/simulator/run_shared.py \
 - shared hook внутри framework;
 - вызов patched-функции через UI.
 
+Для быстрого контрактного smoke-теста Python-кода установите dev-зависимости и запустите:
+
+```bash
+python3 -m pip install -e '.[dev]'
+python3 -m pytest -q
+```
+
+`tests/macos/` остаётся основным end-to-end набором: его runner’ы собирают реальные Mach-O,
+вызывают CLI/toolchain и проверяют результат. `tests/test_shared_template.py` проверяет только
+контракт шаблона и Logos-пре-пасса, без сборки и запуска Mach-O.
+
 Локальные macOS-полигоны находятся в `tests/macos/`, C/Swift-примеры — в `tests/hooks/`.
 
 ## Лицензия

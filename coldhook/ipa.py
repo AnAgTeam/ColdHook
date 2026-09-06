@@ -110,6 +110,31 @@ def _validate_shared_selectors(app: str, dylib: str) -> None:
                 "Укажи bundle-relative или абсолютный путь в макросе.")
 
 
+def _merge_shared(target: str, dylib: str, out: str, import_path: str | None) -> None:
+    """Merge a shared hook into a thin image or every compatible FAT slice."""
+    info = build.macho.inspect(target)
+    if not info.is_fat:
+        build.toolchain.merge(target, dylib, out, mode="shared", import_path=import_path)
+        return
+    hook_info = build.macho.inspect(dylib)
+    patchable = [a for a in info.archs
+                 if a in build.macho.MERGER_ARCHS and a in hook_info.archs]
+    if not patchable:
+        raise PatchError(f"shared FAT {info.archs}: нет общего поддерживаемого слайса с hook {hook_info.archs}")
+    with tempfile.TemporaryDirectory(prefix="coldhook_shared_fat_") as tmp:
+        replacements: dict[str, str] = {}
+        for arch in patchable:
+            thin_target = os.path.join(tmp, f"target_{arch}")
+            thin_hook = dylib if not hook_info.is_fat else os.path.join(tmp, f"hook_{arch}")
+            build.macho.thin(target, arch, thin_target)
+            if hook_info.is_fat:
+                build.macho.thin(dylib, arch, thin_hook)
+            patched = os.path.join(tmp, f"patched_{arch}")
+            build.toolchain.merge(thin_target, thin_hook, patched, mode="shared", import_path=import_path)
+            replacements[arch] = patched
+        build.macho.replace_slices(target, replacements, out)
+
+
 def _run(cmd: list[str], what: str, cwd: str | None = None) -> None:
     p = subprocess.run(cmd, capture_output=True, text=True, cwd=cwd)
     if p.returncode != 0:
@@ -269,7 +294,7 @@ def patch_shared_bundle(inp: str, dylib: str, out: str, do_sign: bool = False,
                 merged = target + ".coldhook"
                 before = open(target, "rb").read() if verbose else None
                 try:
-                    build.toolchain.merge(target, dylib, merged, mode="shared", import_path=import_path)
+                    _merge_shared(target, dylib, merged, import_path)
                 except Exception as exc:
                     if os.path.exists(merged):
                         os.remove(merged)
