@@ -8,8 +8,13 @@ found = [("sym", a, b) if a else ("addr", c, d)
          for p in sorted(root.rglob('*.swift')) for a, b, c, d in pat.findall(p.read_text())]
 if not found: raise SystemExit('no @ColdHookMangled or @ColdHookOffset declarations found')
 lines = ['#include <coldhook.h>', '']
+exports = []
 for i, (kind, binary, target) in enumerate(found, 1):
     h = f'coldhook_handler_{i}'
     macro = f'CH_DYN_SYM("{binary}", "{target}", {h});' if kind == "sym" else f'CH_DYN_ADDR("{binary}", {target}, {h});'
     lines += [f'extern void {h}(void);', f'__attribute__((used)) static void *keep_{i} = (void *)&{h};', macro, '']
+    locator = target if kind == 'sym' else f'COLDHOOK_ADDR_{target}'
+    suffix = f'{kind.upper()}_{binary}__CH__{locator}__CH__{h}'
+    exports += [f'_COLDHOOK_DYN_{suffix}', f'_COLDHOOK_ORIG_{suffix}']
 out.parent.mkdir(parents=True, exist_ok=True); out.write_text('\n'.join(lines))
+out.with_suffix('.exports').write_text('\n'.join(exports) + '\n')

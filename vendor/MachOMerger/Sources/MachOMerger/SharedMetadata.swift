@@ -76,7 +76,7 @@ func emitColdhookSharedStub(address: UInt64, slotAddress: UInt64) -> ColdhookSha
 }
 
 /// Emits a self-describing __DATA,__coldhook payload.  Slots are zero-initialized;
-/// the runtime fills them after resolving handlers.  All offsets are section-relative.
+/// the runtime fills them after resolving full magic entry names.  All offsets are section-relative.
 func emitColdhookSharedMetadata(_ specs: [ColdhookSharedSpec]) -> ColdhookSharedEmission {
     let recordsOffset = align8(Int(coldhookSharedHeaderSize))
     let stringsOffset = recordsOffset + specs.count * Int(coldhookSharedRecordSize)

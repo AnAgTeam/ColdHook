@@ -186,22 +186,8 @@ Shared mode:
 
 ## Swift
 
-The replacement must preserve the original ABI:
-
-```swift
-import Foundation
-
-@_silgen_name("orig_url")
-private func orig_url(for domain: String) -> String
-
-@_silgen_name("url")
-public func url(for domain: String) -> String {
-    if domain == "unknown" { return "patched" }
-    return orig_url(for: domain)
-}
-```
-
-For shared Swift, specify the binary and mangled target:
+The replacement must preserve the original ABI. Specify the binary and mangled
+target; the build preprocessor generates the private linker names and orig thunk:
 
 ```swift
 @ColdHookMangled(
@@ -209,9 +195,13 @@ For shared Swift, specify the binary and mangled target:
     target: "$s12TestSwiftApp3url3forS2S_tF"
 )
 public func url(for domain: String) -> String {
-    return "patched"
+    if domain == "unknown" { return "patched" }
+    return orig_url(for: domain)
 }
 ```
+
+Do not add `@_silgen_name` yourself. Manual Swift/C glue remains an expert
+low-level escape hatch whose internal names are not stable API.
 
 Use `install-theos` and select `iphone/coldhook_tweak_swift`; glue and export declarations are generated automatically.
 

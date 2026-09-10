@@ -55,49 +55,33 @@ private func readBInstruction(_ address: UInt64, from data: MachOMergeData) -> U
 
 /// Reads ColdHook magic declarations. Dynamic forms encode selector, locator and
 /// handler as `_COLDHOOK_DYN_<kind>_<selector>__CH__<locator>__CH__<handler>`.
-/// In a normal clang-produced dylib the magic symbol is the handler itself (its
-/// first instruction is a prologue, not a branch), so the handler name is derived
-/// directly from the magic symbol rather than decoding code bytes.
+/// Target metadata retains this complete name so runtime can resolve the entry
+/// together with its `_COLDHOOK_ORIG_*` slot in one provider-image scope.
 func extractColdhookSharedSpecs(from resolver: ColdhookSymbolResolver, data: MachOMergeData,
                                 targetSelectors: Set<String> = [])
     throws -> [ColdhookSharedSpec] {
     var specs: [ColdhookSharedSpec] = []
-    let hooks = resolver.all(prefix: "_COLDHOOK_").filter {
-        $0.name.hasPrefix("_COLDHOOK_DYN_") || $0.name.hasPrefix("_COLDHOOK_SYM_") || $0.name.hasPrefix("_COLDHOOK_ADDR_")
-    }
+    let hooks = resolver.all(prefix: "_COLDHOOK_DYN_")
     for hook in hooks {
-        let locator: String
-        let handlerName: String
-        let kind: ColdhookHookKind
-        let binarySelector: String?
-        if hook.name.hasPrefix("_COLDHOOK_DYN_") {
-            let payload = String(hook.name.dropFirst("_COLDHOOK_DYN_".count))
-            let parts = payload.components(separatedBy: "__CH__")
-            guard parts.count == 3 else { throw ColdhookSharedHookError.invalidBranch(hook.name) }
-            let dynKindAndSelector = parts[0].split(separator: "_", maxSplits: 1).map(String.init)
-            guard dynKindAndSelector.count == 2,
-                  dynKindAndSelector[0] == "SYM" || dynKindAndSelector[0] == "ADDR",
-                  !dynKindAndSelector[1].isEmpty else {
-                throw ColdhookSharedHookError.invalidBranch(hook.name)
-            }
-            kind = dynKindAndSelector[0] == "SYM" ? .symbol : .address
-            binarySelector = dynKindAndSelector[1]
-            guard targetSelectors.isEmpty || targetSelectors.contains(binarySelector!) else {
-                continue
-            }
-            locator = parts[1]
-            handlerName = parts[2]
-        } else if hook.name.hasPrefix("_COLDHOOK_SYM_") {
-            kind = .symbol
-            binarySelector = nil
-            locator = String(hook.name.dropFirst("_COLDHOOK_SYM_".count))
-            handlerName = locator
-        } else {
-            kind = .address
-            binarySelector = nil
-            locator = "_COLDHOOK_ADDR_" + String(hook.name.dropFirst("_COLDHOOK_ADDR_".count))
-            handlerName = locator
+        let payload = String(hook.name.dropFirst("_COLDHOOK_DYN_".count))
+        let parts = payload.components(separatedBy: "__CH__")
+        guard parts.count == 3 else { throw ColdhookSharedHookError.invalidBranch(hook.name) }
+        let dynKindAndSelector = parts[0].split(separator: "_", maxSplits: 1).map(String.init)
+        guard dynKindAndSelector.count == 2,
+              dynKindAndSelector[0] == "SYM" || dynKindAndSelector[0] == "ADDR",
+              !dynKindAndSelector[1].isEmpty else {
+            throw ColdhookSharedHookError.invalidBranch(hook.name)
         }
+        let kind: ColdhookHookKind = dynKindAndSelector[0] == "SYM" ? .symbol : .address
+        let binarySelector = dynKindAndSelector[1]
+        guard targetSelectors.isEmpty || targetSelectors.contains(binarySelector) else {
+            continue
+        }
+        let locator = parts[1]
+        // dlsym uses the C spelling (without Mach-O's leading underscore).
+        // Keeping the complete magic name in target metadata lets runtime
+        // resolve the entry and its matching ORIG slot in one dylib scope.
+        let handlerName = String(hook.name.dropFirst())
         specs.append(ColdhookSharedSpec(
             kind: kind,
             binarySelector: binarySelector,

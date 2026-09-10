@@ -276,7 +276,7 @@ def prepass(text):
         by_group[grp].append(fid)
     bout = _blank(out)   # %init в комментарии/строке не трогаем (позиции 1:1 с out)
     for grp, fids in by_group.items():
-        enables = " ".join(f"coldhook_disp_{f} = (void*)&{f};" for f in fids)
+        enables = " ".join(f"CH_GATE_ENABLE({f});" for f in fids)
         def repl(mm, e=enables, g=grp):
             if bout[mm.start()] != "%":   # '%' забелен -> матч внутри комментария/строки
                 return mm.group(0)

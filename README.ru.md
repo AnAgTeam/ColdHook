@@ -224,22 +224,8 @@ ColdHook: первый вызывает `coldhook-logos` из `PATH`, второ
 
 ## Swift
 
-Swift-функция должна сохранять ABI оригинала:
-
-```swift
-import Foundation
-
-@_silgen_name("orig_url")
-private func orig_url(for domain: String) -> String
-
-@_silgen_name("url")
-public func url(for domain: String) -> String {
-    if domain == "unknown" { return "patched" }
-    return orig_url(for: domain)
-}
-```
-
-Для shared Swift используется декларация с бинарём и mangled target:
+Swift-функция должна сохранять ABI оригинала. Укажите бинарь и mangled target;
+build-препроцессор сам создаст внутренние linker names и orig thunk:
 
 ```swift
 @ColdHookMangled(
@@ -247,9 +233,13 @@ public func url(for domain: String) -> String {
     target: "$s12TestSwiftApp3url3forS2S_tF"
 )
 public func url(for domain: String) -> String {
-    return "patched"
+    if domain == "unknown" { return "patched" }
+    return orig_url(for: domain)
 }
 ```
+
+Добавлять `@_silgen_name` вручную не нужно. Ручная Swift/C-связка остаётся
+экспертным низкоуровневым escape hatch без стабильности внутренних имён.
 
 Готовый Theos-шаблон Swift устанавливается той же командой `install-theos`, после чего запускается `$THEOS/bin/nic.pl` с выбором `iphone/coldhook_tweak_swift`. Glue-код и экспортные объявления генерируются автоматически.
 

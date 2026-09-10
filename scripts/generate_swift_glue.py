@@ -27,14 +27,19 @@ def main() -> int:
     if not hooks:
         raise SystemExit("coldhook-swift: no @ColdHookMangled or @ColdHookOffset declarations found")
     lines = ["#include <coldhook.h>", ""]
+    exports = []
     for kind, binary, target, fn, index in hooks:
         handler = f"coldhook_handler_{index}"
         lines += [f"extern void {handler}(void);",
                   f"__attribute__((used)) static void *keep_{index} = (void *)&{handler};",
                   (f'CH_DYN_SYM("{binary}", "{target}", {handler});' if kind == "sym"
                    else f'CH_DYN_ADDR("{binary}", {target}, {handler});'), ""]
+        locator = target if kind == "sym" else f"COLDHOOK_ADDR_{target}"
+        suffix = f"{kind.upper()}_{binary}__CH__{locator}__CH__{handler}"
+        exports += [f"_COLDHOOK_DYN_{suffix}", f"_COLDHOOK_ORIG_{suffix}"]
     ns.output.parent.mkdir(parents=True, exist_ok=True)
     ns.output.write_text("\n".join(lines))
+    ns.output.with_suffix(".exports").write_text("\n".join(exports) + "\n")
     return 0
 
 if __name__ == "__main__":

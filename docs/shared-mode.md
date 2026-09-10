@@ -11,9 +11,8 @@ shared gated-группы, ORIG slots, Logos/NIC-шаблоны и runtime linke
 
 ## Следующие этапы
 
-- объединение таблиц при применении нескольких shared hook dylib;
-- provider-aware resolution вместо глобального `RTLD_DEFAULT` при совпадающих handler-именах;
-- Swift DSL/build plugin для автоматической генерации glue и поиска mangled symbol.
+- объединение таблиц и chaining при применении нескольких providers одного hook locator;
+- Swift DSL/build plugin для поиска demangled target-имён.
 
 ## Embedded vs Shared
 
@@ -70,7 +69,7 @@ orig-трамплина относительно слайда target-образ�
 `orig_slot_key` идентифицирует слот в registry shared dylib, который bootstrap связывает с
 `orig_image_offset`; поэтому код, сгенерированный для `%orig`, не требует target-экспорта.
 
-`handler_name_offset` указывает на экспортное имя handler в shared dylib. Стабильный `hook_id`
+`handler_name_offset` указывает на полное имя `COLDHOOK_DYN_*` runtime entry. Стабильный `hook_id`
 может использоваться как дополнительная проверка соответствия `(binary, locator, handle)`.
 Orig-трамплин остаётся в target, поэтому его адрес можно записать непосредственно в metadata;
 экспортировать каждый orig-символ через export trie необязательно.
@@ -80,19 +79,20 @@ Bootstrap, выполняющийся из constructor shared dylib, делае�
 1. перечисляет загруженные Mach-O через dyld API;
 2. находит `__DATA,__coldhook` у каждого target;
 3. проходит записи и читает имена из string table;
-4. разрешает handler в собственной shared dylib через `dlsym`;
+4. перечисляет dyld images и разрешает entry и orig slot через handle конкретной hook-dylib;
 5. атомарно заполняет `handler_slot` и `orig_slot`.
 
 После этого вызов имеет вид:
 
 ```text
-target function → local stub → handler_slot → shared handler
-shared handler → orig_slot → target orig trampoline
+target function → local stub → handler_slot → COLDHOOK_DYN entry → private handler
+private handler → private orig thunk → COLDHOOK_ORIG slot → target orig trampoline
 ```
 
-Имена должны иметь уникальный префикс (`_coldhook_handler$...`), чтобы исключить случайное
-разрешение символа из другого образа. Если handler, ORIG slot или gated dispatch не найден,
-bootstrap пишет диагностику и завершает процесс через `abort()` (fail-fast).
+Полное magic-имя и соответствующий orig slot — единственные публичные hook-specific
+символы. Handler, orig thunk/alias, gate и dispatch slot остаются private. Если entry
+или ORIG slot не найдены в одном dylib scope, bootstrap пишет диагностику и завершает
+процесс через `abort()` (fail-fast).
 
 Одна custom data-секция для таблицы и строк проще, чем синтезировать
 импорт и chained-fixup bind для каждого handler. Native dyld-bind остаётся альтернативным,
@@ -112,7 +112,7 @@ bootstrap пишет диагностику и завершает процесс
 собственного кода. Это также упрощает диагностику (`magic`/`version`/`count`), обработку
 отсутствующих handler-ов и поддержку поздно загруженных образов через callback dyld.
 
-Цена — один раз выполнить `dlsym` на hook при старте и поддерживать shared-side registry для
+Цена — один раз выполнить scoped `dlsym` на hook при старте и поддерживать shared-side registry для
 `%orig`. Для cold-hook сценария это предпочтительнее: стоимость startup пренебрежимо мала, а
 патчинг кода и W^X-переходы по-прежнему отсутствуют.
 

@@ -8,8 +8,8 @@
 
 | Форма | Локатор | Binary selector | Режим |
 |---|---|---|---|
-| `CH_HOOK_SYM(sym, fn)` | имя символа | нет, текущий target | embedded/shared |
-| `CH_HOOK_ADDR(off, fn)` | vmaddr/offset | нет, текущий target | embedded/shared |
+| `CH_HOOK_SYM(sym, fn)` | имя символа | нет, текущий target | embedded |
+| `CH_HOOK_ADDR(off, fn)` | vmaddr/offset | нет, текущий target | embedded |
 | `CH_HOOK_SYM_GATED(sym, fn)` | имя символа | нет, текущий target | embedded |
 | `CH_HOOK_ADDR_GATED(off, fn)` | vmaddr/offset | нет, текущий target | embedded |
 | `CH_DYN_SYM(bin, sym, fn)` | имя символа | `bin` | shared |
@@ -56,6 +56,8 @@ _COLDHOOK_TRAMPOLINE_ADDR_0x1234
 ```text
 _COLDHOOK_DYN_SYM_<binary-selector>__CH__<locator>__CH__<handler>
 _COLDHOOK_DYN_ADDR_<binary-selector>__CH__<locator>__CH__<handler>
+_COLDHOOK_ORIG_SYM_<binary-selector>__CH__<locator>__CH__<handler>
+_COLDHOOK_ORIG_ADDR_<binary-selector>__CH__<locator>__CH__<handler>
 ```
 
 Примеры:
@@ -63,6 +65,8 @@ _COLDHOOK_DYN_ADDR_<binary-selector>__CH__<locator>__CH__<handler>
 ```text
 _COLDHOOK_DYN_SYM_Foo__CH__domain_for__CH__domain_fix
 _COLDHOOK_DYN_ADDR_Foo__CH__COLDHOOK_ADDR_0x1234__CH__fix
+_COLDHOOK_ORIG_SYM_Foo__CH__domain_for__CH__domain_fix
+_COLDHOOK_ORIG_ADDR_Foo__CH__COLDHOOK_ADDR_0x1234__CH__fix
 ```
 
 Внутри merger имя разбирается в `SharedHooks.swift`:
@@ -72,14 +76,17 @@ prefix = _COLDHOOK_DYN_<kind>_
 binary-selector __CH__ locator __CH__ handler
 ```
 
-`binary-selector` сравнивается с identity текущего Mach-O, `locator` разрешается
-через общий symbol resolver или как `COLDHOOK_ADDR_*`, а `handler` записывается в
-shared-таблицу как имя, передаваемое runtime в `dlsym`. Последовательность `__CH__` в этих полях
-должны быть запрещены или экранироваться на этапе генерации.
+`binary-selector` сравнивается с identity текущего Mach-O, а `locator` разрешается
+через общий symbol resolver или как `COLDHOOK_ADDR_*`. В shared-таблицу записывается
+полное C-имя magic-entry (без ведущего Mach-O `_`). Runtime находит конкретную
+hook-dylib, в её scope разрешает одновременно `COLDHOOK_DYN_*` и соответствующий
+`COLDHOOK_ORIG_*`, затем заполняет target handler slot и writable orig slot.
 
-Это служебные export-like magic-символы hook-dylib. Они не являются экспортами
-target-бинаря: target export разрешается отдельно, а runtime-экспортом handler-а
-остаётся обычная глобальная функция `domain_fix`/`fix`.
+На каждый shared hook публичны только эти два символа. `handler`,
+`coldhook_orig_<handler>`, `orig_<handler>`, gate и dispatch slot имеют
+`private_extern` и отсутствуют в export trie. Сам `COLDHOOK_DYN_*` остаётся коротким
+стабом `b handler` как для C/Objective-C, так и для автоматически обработанного Swift.
+Последовательность `__CH__` в полях должна быть запрещена или экранироваться генератором.
 
 ## Данные Mach-O, которые могут описывать экспорт
 

@@ -31,7 +31,7 @@ struct coldhook_shared_record {
     uint32_t handler_slot_offset;
     uint32_t reserved0;
     uint64_t orig_image_offset;
-    uint32_t handler_name_offset;
+    uint32_t handler_name_offset; /* complete C spelling of COLDHOOK_DYN_* entry */
     uint32_t handler_name_size;
     uint32_t orig_slot_key;
     uint32_t flags;

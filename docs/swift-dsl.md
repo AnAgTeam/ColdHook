@@ -1,115 +1,66 @@
-# ColdHook Swift DSL — план следующего этапа
+# ColdHook Swift DSL
 
-Текущий shared Swift-шаблон использует ручной `glue.c`. Следующая версия должна убрать этот
-файл из пользовательского workflow.
+Для shared Swift основной API — аннотации `@ColdHookMangled` и
+`@ColdHookOffset` из шаблона `iphone/coldhook_tweak_swift`. Пользователь пишет
+обычную Swift-функцию с ABI цели; build-препроцессор удаляет аннотацию, назначает
+внутренние linker names handler-а и `orig`, затем генерирует C/assembler glue.
 
-## Planned workflow
+## По mangled symbol
 
 ```swift
-@ColdHook(binary: "TestSwiftApp", symbol: "TestSwiftApp.url(for:)")
-func url(_ domain: String) -> String {
-    if domain != "application" { return "https://fallback.coldhook" }
-    return coldhookOriginal(domain)
+@ColdHookMangled(
+    binary: "TestSwiftApp",
+    target: "$s12TestSwiftApp3url3forS2S_tF"
+)
+public func url(for domain: String) -> String {
+    if domain == "unknown" { return "https://fallback" }
+    return orig_url(for: domain)
 }
 ```
 
-`coldhook-swift`/SwiftPM build plugin получает target Mach-O после его сборки, запускает
-`nm`/`swift-demangle`, находит mangled symbol и генерирует `ColdHookGenerated.c`/`.S` с
-`CH_DYN_SYM` или `CH_DYN_ADDR`, ORIG-именем и необходимыми объявлениями. Swift macro отвечает
-за декларацию и типизированное тело, а внешний generator — за связь с конкретным бинарём.
-Макрос сам по себе не может прочитать target symbol table во время компиляции.
+`target` задаётся без ведущего Mach-O-подчёркивания. Сигнатура replacement и
+сгенерированного `orig_url` совпадает с ABI оригинальной Swift-функции, включая
+Swift-типы, metadata и calling convention.
 
-Цель: писать хуки чистых Swift-методов так же привычно, как Logos для ObjC. Движок уже умеет
-by-name / by-offset / ORIG (см. `tests/macos/run_swift.py`, `tests/hooks/swift_replace`); это —
-дизайн **эргономичной обёртки** поверх него. Не реализация, а план.
+## По адресу
 
-## Принципы именования (по Swift API Design Guidelines)
-
-- Без префиксов в стиле ObjC (`NS`/`UI`). Неймспейс даёт **модуль**: `import ColdHook`.
-- Макрос — `@Hook` (а не `@CTHook`: `CT`-префикс не по канону). Квалифицируется модулем при
-  конфликте: `ColdHook.Hook`.
-- Группировка не-макро API — **caseless enum** `enum ColdHook { ... }`, не класс.
-- `orig` — вызов оригинала (привычно по `%orig` Logos / `orig` Orion).
-- Строка-цель = **демангленое имя** Swift (`Mod.Type.method(label:)`), как разработчик читает вызов.
-
-## Как выглядит
-
-Базовый случай (free / `final` / struct-функция — движок уже тянет):
 ```swift
-import ColdHook
-
-@Hook("TestSwiftApp.url(for:)")
-func url(for domain: String) -> String {
-    guard domain == "application" else { return "https://fallback" }
-    return orig(domain)                  // оригинал
+@ColdHookOffset(binary: "TestSwiftApp", offset: 0xb99a8)
+public func fix(_ env: Int) -> String {
+    env == 99 ? "patched" : orig_fix(env)
 }
 ```
 
-По адресу (стрипнутый бинарь без символов):
-```swift
-@Hook(address: 0xb99a8)
-func fix(_ env: Int) -> String { env == 99 ? "patched" : orig(env) }
+`offset` — исходный unslid vmaddr/offset выбранного Mach-O. `@ColdHookOffset`
+использует тот же orig thunk, что и вариант по символу.
+
+## Linker names
+
+Пользователь не добавляет `@_silgen_name`. Препроцессор связывает handler с
+внутренним именем и объявляет `orig_<имя функции>` на private orig alias/thunk.
+Magic entry остаётся отдельным стабом `b handler`, одинаковым для by-name и
+by-offset.
+
+На каждый hook из dylib экспортируются только:
+
+```text
+_COLDHOOK_DYN_<kind>_<binary>__CH__<locator>__CH__<handler>
+_COLDHOOK_ORIG_<kind>_<binary>__CH__<locator>__CH__<handler>
 ```
 
-Метод класса (Orion-подобно, с `self`) — поздняя стадия:
-```swift
-@HookClass(MyViewModel.self)
-final class MyHooks {
-    @Hook("load(_:)")
-    func load(_ n: Int) -> String { orig(n) + "!" }
-}
-```
+Handler, orig thunk, `orig_*` alias, gate и dispatch slot имеют private linkage.
+Ручная связка Swift `@_silgen_name` с собственным C/Objective-C glue остаётся
+низкоуровневым escape hatch без гарантии стабильности внутренних имён.
 
-## Как работает
+## Ограничения
 
-ColdHook — **статика на этапе merge**, не рантайм-swizzle. Макрос не ходит в файлы при
-раскрытии, поэтому эмитит *намерение*, а резолв — в мёрджере.
+- Replacement обязан точно сохранять Swift ABI цели.
+- Автоматический путь принимает уже известное mangled name либо адрес; поиск по
+  demangled имени пока не реализован.
+- Виртуальные методы классов, witness/vtable dispatch и `@objc dynamic` требуют
+  выбора правильного target thunk; для Objective-C обычно удобнее Logos.
+- Chaining нескольких providers одного locator остаётся отдельным этапом.
 
-```
-1. @Hook (compile-time) раскрывается в:
-   - impl-функцию с фиксированным символом   (@_silgen_name "_ch_<id>")
-   - orig — обёртку на ORIG-слот              (@_silgen_name "_coldhook_orig_<id>")
-   - ДЕСКРИПТОР в секции __DATA_CONST,__coldhook:
-       { target: "TestSwiftApp.url(for:)",  hook: &impl,  origSlot: &slot }
-
-2. merge-time (мёрджер читает __coldhook):
-   для каждого дескриптора:
-   - target "0x..."    -> адрес напрямую
-   - target "Mod.f()"  -> резолв по symtab ЦЕЛИ: демangling всех символов, матч по
-                          читаемому имени (+ сигнатура для перегрузок) -> адрес
-   - ПАТЧ: первая инструкция цели -> b hook; сохранить её (переэнкод если PC-relative)
-           в origSlot + b цель+4
-```
-
-Под капотом — те же магик-символы `_MACHOMERGER_HOOK_/ORIG_/HOOKTRAMPOLINE_` + ORIG-слот, что
-сейчас генерит `CH_HOOK_SYM`/`CH_HOOK_ADDR`. Разница в том, что цель задаётся ЧИТАЕМОЙ строкой,
-а соответствие «строка → `$s`-символ» ищется в symtab цели (сырой парсер, SwiftMachO-независимый).
-
-## Что переиспользуется / что новое
-
-| Уже есть | Новое для @Hook |
-|---|---|
-| магик-символы HOOK/ORIG/HOOKTRAMPOLINE, ORIG-слот | Swift-макрос (5.9+), генерящий glue |
-| переэнкод PC-relative первой инструкции (ORIG) | секция-дескрипторов `__coldhook` вместо ручных символов |
-| by-offset / by-name; сырой разбор symtab | резолвер «читаемое имя → `$s`-символ» (демangling-матч, перегрузки) |
-| free / `final` / struct — полностью | `self`-ABI + thunk/vtable для **методов** класса |
-
-## Открытые вопросы
-
-- **Резолвер имени** — отдельный, разблокирует и `@Hook`, и Logos-мост. Демangling символов
-  цели (`nm | swift demangle`-эквивалент в оркестраторе) + матч по `Type.method(labels:)`,
-  снятие неоднозначности перегрузок по типам аргументов.
-- **Методы класса**: `self` приходит доп. параметром (для класса — указатель в контекст-регистре);
-  виртуальные вызовы идут через vtable/`Tj`-thunk, протокольные — через witness `TW`. Чтобы
-  ловить ВСЕ вызовы не-`final` метода, патчить надо thunk/запись vtable, а не только тело.
-- **`@objc dynamic`** методы и так берёт Logos/Orion (через селектор/`NSString`). Уникальная
-  ниша ColdHook — чистый Swift; для демо @Hook брать не-`@objc` цель.
-- **Дескрипторная секция vs символы**: дескриптор в `__coldhook` чище ручных магик-символов и
-  естественно покрывает и by-name, и by-offset. Решить формат записи (строки в `__cstring`).
-
-## Связанные сущности (уже в репо)
-
-- `coldhook/include/coldhook.h` — `CH_HOOK_ADDR` (by-offset), `CH_HOOK_SYM` (by-name), `CH_ORIG`.
-- `tests/macos/run_swift.py` — by-name + ORIG, запускаемый на macOS.
-- `tests/hooks/swift_replace` — сэмпл (by-name + ORIG) на TestSwiftApp, проверен на устройстве.
-- Резолв символов — сырой `coldhookParseSymtab` в `vendor/MachOMerger/Sources/MachOMerger/main.swift`.
+Реализация препроцессора находится в
+`coldhook/templates/coldhook-swift-shared/coldhook_swift_preprocess.py`;
+регрессия `@ColdHookOffset` — в `tests/macos/run_swift_offset.py`.
