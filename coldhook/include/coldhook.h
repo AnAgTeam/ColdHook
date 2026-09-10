@@ -94,71 +94,83 @@
 
 // Именованные shared-декларации. Поля сериализуются прямо в имени magic-экспорта;
 // используем `__CH__` как безопасный для assembler разделитель (символ `|` inline
-// assembler не принимает). Поля не должны содержать `__CH__`.
+// assembler не принимает). Поля не должны содержать `__CH__`. Публичны только
+// полный _COLDHOOK_DYN_* entry и соответствующий writable _COLDHOOK_ORIG_* slot;
+// handler, orig thunk/alias, gate и dispatch получают private linkage.
 #define CH_DYN_SYM(bin, sym, fn) \
   __asm__( \
+    ".private_extern _" #fn "\n" \
     ".section __DATA,__data\n.p2align 3\n" \
-    ".globl _coldhook_orig_slot_" #fn "\n" \
-    "_coldhook_orig_slot_" #fn ":\n    .quad 0\n" \
+    ".globl _COLDHOOK_ORIG_SYM_" bin "__CH__" sym "__CH__" #fn "\n" \
+    "_COLDHOOK_ORIG_SYM_" bin "__CH__" sym "__CH__" #fn ":\n    .quad 0\n" \
     ".text\n.p2align 2\n" \
     ".globl _COLDHOOK_DYN_SYM_" bin "__CH__" sym "__CH__" #fn "\n" \
     ".no_dead_strip _COLDHOOK_DYN_SYM_" bin "__CH__" sym "__CH__" #fn "\n" \
     "_COLDHOOK_DYN_SYM_" bin "__CH__" sym "__CH__" #fn ":\n    b _" #fn "\n" \
-    ".globl _coldhook_orig_" #fn "\n" \
-    "_coldhook_orig_" #fn ":\n    adrp x16, _coldhook_orig_slot_" #fn "@PAGE\n    ldr x16, [x16, _coldhook_orig_slot_" #fn "@PAGEOFF]\n    br x16\n" \
-    ".globl _orig_" #fn "\n" \
+    ".globl _coldhook_orig_" #fn "\n.private_extern _coldhook_orig_" #fn "\n" \
+    "_coldhook_orig_" #fn ":\n    adrp x16, _COLDHOOK_ORIG_SYM_" bin "__CH__" sym "__CH__" #fn "@PAGE\n    ldr x16, [x16, _COLDHOOK_ORIG_SYM_" bin "__CH__" sym "__CH__" #fn "@PAGEOFF]\n    br x16\n" \
+    ".globl _orig_" #fn "\n.private_extern _orig_" #fn "\n" \
     "_orig_" #fn ":\n    b _coldhook_orig_" #fn "\n" \
     ".section __DATA_CONST,__const\n.p2align 3\n" \
     "_coldhook_dyn_anchor_" #fn ":\n    .quad _COLDHOOK_DYN_SYM_" bin "__CH__" sym "__CH__" #fn "\n" \
   )
 #define CH_DYN_ADDR(bin, off, fn) \
   __asm__( \
+    ".private_extern _" #fn "\n" \
     ".section __DATA,__data\n.p2align 3\n" \
-    ".globl _coldhook_orig_slot_" #fn "\n" \
-    "_coldhook_orig_slot_" #fn ":\n    .quad 0\n" \
+    ".globl _COLDHOOK_ORIG_ADDR_" bin "__CH__COLDHOOK_ADDR_" #off "__CH__" #fn "\n" \
+    "_COLDHOOK_ORIG_ADDR_" bin "__CH__COLDHOOK_ADDR_" #off "__CH__" #fn ":\n    .quad 0\n" \
     ".text\n.p2align 2\n" \
     ".globl _COLDHOOK_DYN_ADDR_" bin "__CH__COLDHOOK_ADDR_" #off "__CH__" #fn "\n" \
     ".no_dead_strip _COLDHOOK_DYN_ADDR_" bin "__CH__COLDHOOK_ADDR_" #off "__CH__" #fn "\n" \
     "_COLDHOOK_DYN_ADDR_" bin "__CH__COLDHOOK_ADDR_" #off "__CH__" #fn ":\n    b _" #fn "\n" \
-    ".globl _coldhook_orig_" #fn "\n" \
-    "_coldhook_orig_" #fn ":\n    adrp x16, _coldhook_orig_slot_" #fn "@PAGE\n    ldr x16, [x16, _coldhook_orig_slot_" #fn "@PAGEOFF]\n    br x16\n" \
+    ".globl _coldhook_orig_" #fn "\n.private_extern _coldhook_orig_" #fn "\n" \
+    "_coldhook_orig_" #fn ":\n    adrp x16, _COLDHOOK_ORIG_ADDR_" bin "__CH__COLDHOOK_ADDR_" #off "__CH__" #fn "@PAGE\n    ldr x16, [x16, _COLDHOOK_ORIG_ADDR_" bin "__CH__COLDHOOK_ADDR_" #off "__CH__" #fn "@PAGEOFF]\n    br x16\n" \
+    ".globl _orig_" #fn "\n.private_extern _orig_" #fn "\n" \
+    "_orig_" #fn ":\n    b _coldhook_orig_" #fn "\n" \
     ".section __DATA_CONST,__const\n.p2align 3\n" \
     "_coldhook_dyn_anchor_" #fn ":\n    .quad _COLDHOOK_DYN_ADDR_" bin "__CH__COLDHOOK_ADDR_" #off "__CH__" #fn "\n" \
   )
 
-// Shared gated variants: the target table resolves `coldhook_gate_<fn>` once;
+// Shared gated variants: the target table resolves the full magic entry once;
 // subsequent enable/disable only switches the local writable dispatch slot.
 #define CH_DYN_SYM_GATED(bin, sym, fn) \
   __asm__( \
+    ".private_extern _" #fn "\n" \
     ".section __DATA,__data\n.p2align 3\n" \
-    ".globl _coldhook_orig_slot_" #fn "\n" \
-    "_coldhook_orig_slot_" #fn ":\n    .quad 0\n" \
-    ".globl _coldhook_disp_" #fn "\n" \
-    "_coldhook_disp_" #fn ":\n    .quad 0\n" \
+    ".globl _COLDHOOK_ORIG_SYM_" bin "__CH__" sym "__CH__coldhook_gate_" #fn "\n" \
+    "_COLDHOOK_ORIG_SYM_" bin "__CH__" sym "__CH__coldhook_gate_" #fn ":\n    .quad 0\n" \
+    ".globl _coldhook_disp_" #fn "\n.private_extern _coldhook_disp_" #fn "\n" \
+    "_coldhook_disp_" #fn ":\n    .quad _coldhook_orig_" #fn "\n" \
     ".text\n.p2align 2\n" \
-    ".globl _coldhook_gate_" #fn "\n" \
+    ".globl _coldhook_gate_" #fn "\n.private_extern _coldhook_gate_" #fn "\n" \
     "_coldhook_gate_" #fn ":\n    adrp x16, _coldhook_disp_" #fn "@PAGE\n    ldr x16, [x16, _coldhook_disp_" #fn "@PAGEOFF]\n    br x16\n" \
     ".globl _COLDHOOK_DYN_SYM_" bin "__CH__" sym "__CH__coldhook_gate_" #fn "\n" \
     ".no_dead_strip _COLDHOOK_DYN_SYM_" bin "__CH__" sym "__CH__coldhook_gate_" #fn "\n" \
     "_COLDHOOK_DYN_SYM_" bin "__CH__" sym "__CH__coldhook_gate_" #fn ":\n    b _coldhook_gate_" #fn "\n" \
-    ".globl _coldhook_orig_" #fn "\n" \
-    "_coldhook_orig_" #fn ":\n    adrp x16, _coldhook_orig_slot_" #fn "@PAGE\n    ldr x16, [x16, _coldhook_orig_slot_" #fn "@PAGEOFF]\n    br x16\n" \
+    ".globl _coldhook_orig_" #fn "\n.private_extern _coldhook_orig_" #fn "\n" \
+    "_coldhook_orig_" #fn ":\n    adrp x16, _COLDHOOK_ORIG_SYM_" bin "__CH__" sym "__CH__coldhook_gate_" #fn "@PAGE\n    ldr x16, [x16, _COLDHOOK_ORIG_SYM_" bin "__CH__" sym "__CH__coldhook_gate_" #fn "@PAGEOFF]\n    br x16\n" \
+    ".globl _orig_" #fn "\n.private_extern _orig_" #fn "\n" \
+    "_orig_" #fn ":\n    b _coldhook_orig_" #fn "\n" \
   )
 #define CH_DYN_ADDR_GATED(bin, off, fn) \
   __asm__( \
+    ".private_extern _" #fn "\n" \
     ".section __DATA,__data\n.p2align 3\n" \
-    ".globl _coldhook_orig_slot_" #fn "\n" \
-    "_coldhook_orig_slot_" #fn ":\n    .quad 0\n" \
-    ".globl _coldhook_disp_" #fn "\n" \
-    "_coldhook_disp_" #fn ":\n    .quad 0\n" \
+    ".globl _COLDHOOK_ORIG_ADDR_" bin "__CH__COLDHOOK_ADDR_" #off "__CH__coldhook_gate_" #fn "\n" \
+    "_COLDHOOK_ORIG_ADDR_" bin "__CH__COLDHOOK_ADDR_" #off "__CH__coldhook_gate_" #fn ":\n    .quad 0\n" \
+    ".globl _coldhook_disp_" #fn "\n.private_extern _coldhook_disp_" #fn "\n" \
+    "_coldhook_disp_" #fn ":\n    .quad _coldhook_orig_" #fn "\n" \
     ".text\n.p2align 2\n" \
-    ".globl _coldhook_gate_" #fn "\n" \
+    ".globl _coldhook_gate_" #fn "\n.private_extern _coldhook_gate_" #fn "\n" \
     "_coldhook_gate_" #fn ":\n    adrp x16, _coldhook_disp_" #fn "@PAGE\n    ldr x16, [x16, _coldhook_disp_" #fn "@PAGEOFF]\n    br x16\n" \
     ".globl _COLDHOOK_DYN_ADDR_" bin "__CH__COLDHOOK_ADDR_" #off "__CH__coldhook_gate_" #fn "\n" \
     ".no_dead_strip _COLDHOOK_DYN_ADDR_" bin "__CH__COLDHOOK_ADDR_" #off "__CH__coldhook_gate_" #fn "\n" \
     "_COLDHOOK_DYN_ADDR_" bin "__CH__COLDHOOK_ADDR_" #off "__CH__coldhook_gate_" #fn ":\n    b _coldhook_gate_" #fn "\n" \
-    ".globl _coldhook_orig_" #fn "\n" \
-    "_coldhook_orig_" #fn ":\n    adrp x16, _coldhook_orig_slot_" #fn "@PAGE\n    ldr x16, [x16, _coldhook_orig_slot_" #fn "@PAGEOFF]\n    br x16\n" \
+    ".globl _coldhook_orig_" #fn "\n.private_extern _coldhook_orig_" #fn "\n" \
+    "_coldhook_orig_" #fn ":\n    adrp x16, _COLDHOOK_ORIG_ADDR_" bin "__CH__COLDHOOK_ADDR_" #off "__CH__coldhook_gate_" #fn "@PAGE\n    ldr x16, [x16, _COLDHOOK_ORIG_ADDR_" bin "__CH__COLDHOOK_ADDR_" #off "__CH__coldhook_gate_" #fn "@PAGEOFF]\n    br x16\n" \
+    ".globl _orig_" #fn "\n.private_extern _orig_" #fn "\n" \
+    "_orig_" #fn ":\n    b _coldhook_orig_" #fn "\n" \
   )
 
 // --- GATED хук: статически установлен, но рантайм-переключаемый ----------------------
@@ -227,8 +239,8 @@
 // Доступ к гейту из C (например в конструкторе по %init(Group)):
 #define CH_GATE(fn)          coldhook_disp_##fn
 #define CH_DECLARE_GATE(fn)  extern void *coldhook_disp_##fn
-#define CH_GATE_ENABLE(fn)   (coldhook_disp_##fn = (void *)&fn)
-#define CH_GATE_DISABLE(fn)  (coldhook_disp_##fn = (void *)&coldhook_orig_##fn)
+#define CH_GATE_ENABLE(fn)   __atomic_store_n(&coldhook_disp_##fn, (void *)&fn, __ATOMIC_RELAXED)
+#define CH_GATE_DISABLE(fn)  __atomic_store_n(&coldhook_disp_##fn, (void *)&coldhook_orig_##fn, __ATOMIC_RELAXED)
 
 // --- опциональные короткие алиасы ----------------------------------------------------
 #ifdef COLDHOOK_SHORT_NAMES

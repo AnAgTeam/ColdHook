@@ -104,7 +104,11 @@ struct coldhook_shared_record {
 };
 ```
 
-Имена handler-ов кодируются в magic exports hook dylib-а. MachOMerger выбирает записи по binary selector, синтезирует stub/table и сохраняет имя handler-а как data. Bootstrap остаётся универсальным и не перекомпилируется при изменении набора хуков.
+Полные имена `_COLDHOOK_DYN_*` кодируют selector, locator и handler. MachOMerger
+выбирает записи по binary selector, синтезирует stub/table и сохраняет полное
+runtime-entry имя как data. Bootstrap перечисляет dyld images, находит provider и
+разрешает в scope одной dylib entry вместе с соответствующим `_COLDHOOK_ORIG_*`
+slot. Короткие handler names и orig/gate/dispatch helpers наружу не экспортируются.
 
 ## Runtime flow
 

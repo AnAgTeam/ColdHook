@@ -24,7 +24,7 @@ for p in sorted(src.rglob('*.swift')):
         sig = match.group('sig').strip()
         orig_name = f'orig_{name}'
         orig = f'@_silgen_name("{orig_name}")\nprivate func {orig_name}{sig}\n\n'
-        return orig + f'@_silgen_name("{name}")\n' + match.group(0)
+        return orig + f'@_silgen_name("{name}")\ninternal func {name}{sig} {{'
     cleaned = func_pat.sub(add_orig, cleaned)
     dst.write_text(cleaned)
 if not found:
@@ -37,3 +37,9 @@ for i, (kind, binary, target, handler, offset) in enumerate(found, 1):
                else f'CH_DYN_ADDR("{binary}", {offset}, {handler});'), '']
 glue.parent.mkdir(parents=True, exist_ok=True)
 glue.write_text('\n'.join(lines))
+exports = []
+for kind, binary, target, handler, offset in found:
+    locator = target if kind == "sym" else f"COLDHOOK_ADDR_{offset}"
+    suffix = f"{kind.upper()}_{binary}__CH__{locator}__CH__{handler}"
+    exports += [f"_COLDHOOK_DYN_{suffix}", f"_COLDHOOK_ORIG_{suffix}"]
+glue.with_suffix('.exports').write_text('\n'.join(exports) + '\n')

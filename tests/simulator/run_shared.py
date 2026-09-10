@@ -89,6 +89,15 @@ def main() -> int:
              "-o", str(runtime)])
     if not args.dylib:
         hooks = ROOT / "tests/simulator/hooks"
+        exports = hook_build / "exports.list"
+        exports.write_text("\n".join([
+            "_COLDHOOK_DYN_SYM_TestSwiftApp__CH__$s12TestSwiftApp3url3forS2S_tF__CH__url",
+            "_COLDHOOK_ORIG_SYM_TestSwiftApp__CH__$s12TestSwiftApp3url3forS2S_tF__CH__url",
+            "_COLDHOOK_DYN_SYM_TestSwiftApp__CH__$s12TestSwiftApp17get_label_contentSSyF__CH__getLabelContent",
+            "_COLDHOOK_ORIG_SYM_TestSwiftApp__CH__$s12TestSwiftApp17get_label_contentSSyF__CH__getLabelContent",
+            "_COLDHOOK_DYN_SYM_TestFramework__CH__$s13TestFramework14frameworkProbes5Int32VyF__CH__frameworkProbe",
+            "_COLDHOOK_ORIG_SYM_TestFramework__CH__$s13TestFramework14frameworkProbes5Int32VyF__CH__frameworkProbe",
+        ]) + "\n")
         swift_obj = hook_build / "Tweak.swift.o"
         c_obj = hook_build / "Tweak.m.o"
         run(["swiftc", "-target", "arm64-apple-ios15.0-simulator", "-sdk", sdk,
@@ -99,6 +108,7 @@ def main() -> int:
              "-parse-as-library", "-emit-library", str(hooks / "Tweak.swift"), str(c_obj),
              "-L", str(hook_build), "-lcoldhook", "-o", str(dylib),
              "-Xlinker", "-install_name", "-Xlinker", "@rpath/coldhookdtest.dylib",
+             "-Xlinker", "-exported_symbols_list", "-Xlinker", str(exports),
              "-Xlinker", "-undefined", "-Xlinker", "dynamic_lookup",
              "-Xlinker", "-needed_library", "-Xlinker", str(runtime)])
     app = derived / "Build/Products/Release-iphonesimulator/TestSwiftApp.app"

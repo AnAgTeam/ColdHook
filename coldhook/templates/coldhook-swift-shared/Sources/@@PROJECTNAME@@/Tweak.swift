@@ -1,5 +1,5 @@
-// Shared Swift hook. Keep the ABI identical to the target function.
-// Replace the @_silgen_name values and signature with your target's ABI.
+// Shared Swift hook. Keep the ABI identical to the target function. The build
+// preprocessor supplies private linker names; do not add @_silgen_name manually.
 import Foundation
 
 // @ColdHookMangled(binary: "TestSwiftApp", target: "$s12TestSwiftApp3url3forS2S_tF")

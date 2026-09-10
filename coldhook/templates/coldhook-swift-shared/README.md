@@ -1,7 +1,8 @@
 # @@PROJECTNAME@@
 
-Shared Swift ColdHook template. `Hook.swift` contains the Swift replacement and
-`glue.c` emits `CH_DYN_SYM` (or `CH_DYN_ADDR`) metadata for the selected binary.
+Shared Swift ColdHook template. Annotate a replacement with `@ColdHookMangled`
+or `@ColdHookOffset`. The build preprocessor creates the C glue, private handler
+and orig linker names; do not add `@_silgen_name` manually.
 
 The project ships `libcoldhook.tbd`, so the real `libcoldhook.dylib` is not needed
 while linking. It is required at runtime. Build and apply with:
@@ -13,4 +14,6 @@ python3 -m coldhook shared My.app \
   --out My.patched.app
 ```
 
-Use the target's mangled Swift symbol without its leading underscore in `CH_DYN_SYM`.
+For `@ColdHookMangled`, use the target's mangled Swift symbol without its leading
+underscore. Call the generated `orig_<function-name>` declaration when the
+replacement needs the original implementation.

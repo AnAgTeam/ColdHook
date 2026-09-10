@@ -17,6 +17,9 @@ def test_shared_template_contract():
     readme = (template / "README.md").read_text()
     assert "coldhook_shared.h" in tweak
     assert "-lcoldhook" in makefile and "COLDHOOK_RUNTIME_DIR" in makefile
+    swift_makefile = (root / "coldhook" / "templates" / "coldhook-swift-shared" /
+                      "Makefile").read_text()
+    assert "-exported_symbols_list,.coldhook/Tweak.exports" in swift_makefile
     assert "0x1234" in readme and "%group" in readme
 
     source = '''
@@ -31,7 +34,7 @@ def test_shared_template_contract():
     assert 'CH_DYN_SYM("MainBinary", "by_name", _chf_by_name);' in out
     assert 'CH_DYN_ADDR("MainBinary", 0x1234, _chf_addr_1234);' in out
     assert 'CH_DYN_SYM_GATED("MainBinary", "grouped", _chf_grouped);' in out
-    assert 'coldhook_disp__chf_grouped = (void*)&_chf_grouped;' in out
+    assert 'CH_GATE_ENABLE(_chf_grouped);' in out
 
 
 def main():

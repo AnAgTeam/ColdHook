@@ -14,6 +14,7 @@ endif
 @@PROJECTNAME@@_SWIFTFLAGS = -ISources/@@PROJECTNAME@@C/include
 @@PROJECTNAME@@_CFLAGS = -fobjc-arc -ISources/@@PROJECTNAME@@C/include
 @@PROJECTNAME@@_LDFLAGS = -Wl,-no_warn_inits -Wl,-fixup_chains -Xlinker -add_split_seg_info \
-    -Wl,-not_for_dyld_shared_cache -L$(COLDHOOK_RUNTIME_DIR) -lcoldhook
+    -Wl,-not_for_dyld_shared_cache -Wl,-exported_symbols_list,.coldhook/Tweak.exports \
+    -L$(COLDHOOK_RUNTIME_DIR) -lcoldhook
 
 include $(THEOS)/makefiles/tweak.mk
