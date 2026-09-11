@@ -221,6 +221,7 @@ def patch_bundle(inp: str, config: Config, out: str, do_sign: bool = False) -> s
     return out
 
 
+@traced('Shared-патч бандла', 'inp', 'out')
 def patch_shared_bundle(inp: str, dylib: str, out: str, do_sign: bool = False,
                         import_path: str | None = None, runtime: str | None = None,
                         verbose: bool = False, skip_unsupported: bool = False) -> str:
