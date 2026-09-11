@@ -299,7 +299,8 @@ def patch_shared_bundle(inp: str, dylib: str, out: str, do_sign: bool = False,
                     if os.path.exists(merged):
                         os.remove(merged)
                     if skip_unsupported and any(marker in str(exc) for marker in
-                                                ("FatNotMachO", "Unsupported", "not a Mach-O")):
+                                                ("FatNotMachO", "Unsupported", "not a Mach-O",
+                                                 "Unhandled command Unknown")):
                         if verbose:
                             print(f"skip unsupported {os.path.relpath(target, app)}: {exc}")
                         continue
