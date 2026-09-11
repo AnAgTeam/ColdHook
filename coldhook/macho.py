@@ -8,10 +8,12 @@ from __future__ import annotations
 import re
 import subprocess
 from dataclasses import dataclass, field
+from .toolchain import _run as run_tool
+from .diagnostics import traced
 
 try:
     import lief
-except ImportError:  # pragma: no cover - only for legacy installations
+except (ImportError, OSError):  # pragma: no cover - only for legacy installations
     lief = None
 
 
@@ -43,7 +45,7 @@ _PLATFORMS = {"1": "macos", "2": "ios", "3": "tvos", "4": "watchos",
 
 
 def _run(cmd: list[str]) -> str:
-    return subprocess.run(cmd, capture_output=True, text=True).stdout
+    return run_tool(cmd, "чтение метаданных Mach-O").stdout
 
 
 def is_macho(path: str) -> bool:
@@ -63,11 +65,10 @@ def _pick_arch(archs: list[str]) -> str:
     return archs[0] if archs else ""
 
 
+@traced("Анализ Mach-O", "path")
 def inspect(path: str) -> MachOInfo:
     """Собрать метаданные Mach-O. Бросает ValueError, если это не Mach-O."""
-    archs_out = subprocess.run(["lipo", "-archs", path], capture_output=True, text=True)
-    if archs_out.returncode != 0:
-        raise ValueError(f"не Mach-O или не читается: {path}")
+    archs_out = run_tool(["lipo", "-archs", path], f"определение архитектур {path}")
     archs = archs_out.stdout.split()
     info = MachOInfo(path=path, archs=archs, is_fat=len(archs) > 1, arch=_pick_arch(archs))
 
@@ -96,9 +97,7 @@ def inspect(path: str) -> MachOInfo:
 
 
 def _lipo(args: list[str], what: str) -> None:
-    p = subprocess.run(["lipo", *args], capture_output=True, text=True)
-    if p.returncode != 0:
-        raise ValueError(f"lipo {what} упало: {p.stderr.strip() or p.stdout.strip()}")
+    run_tool(["lipo", *args], f"lipo {what}")
 
 
 def thin(path: str, arch: str, out: str) -> None:

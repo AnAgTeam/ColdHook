@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+from .diagnostics import traced
 import shutil
 import tempfile
 
@@ -25,9 +26,13 @@ class PatchError(RuntimeError):
     pass
 
 
+@traced('Подготовка хука', 'workdir')
 def _build_or_get_hook(target: Target, info: macho.MachOInfo, workdir: str) -> str:
     """Собрать хук из исходников под арку/платформу слайса либо вернуть готовый dylib."""
     if target.sources:
+        for source in target.sources:
+            if not os.path.isfile(source):
+                raise PatchError(f"[{target.name}] исходник не найден или не файл: {source}")
         os.makedirs(workdir, exist_ok=True)
         hook = os.path.join(workdir, "libhook.dylib")
         _say(f"[{target.name}] собираю хук под {info.arch}/{info.platform or 'macos'}")
@@ -43,9 +48,13 @@ def _build_or_get_hook(target: Target, info: macho.MachOInfo, workdir: str) -> s
     return hook
 
 
+@traced('Merge слайса', 'binary_thin')
 def _merge_thin(target: Target, info_thin: macho.MachOInfo, binary_thin: str,
                 out_thin: str, workdir: str) -> None:
     """Смёрджить хук в один тонкий (single-arch) бинарь."""
+    if info_thin.arch not in macho.MERGER_ARCHS:
+        raise PatchError(f"[{target.name}] архитектура {info_thin.arch!r} не поддержана; "
+                         f"нужна одна из {sorted(macho.MERGER_ARCHS)}")
     if info_thin.encrypted:
         raise PatchError(f"[{target.name}] слайс {info_thin.arch} зашифрован "
                          f"(cryptid={info_thin.cryptid}); нужен расшифрованный дамп")
@@ -53,6 +62,7 @@ def _merge_thin(target: Target, info_thin: macho.MachOInfo, binary_thin: str,
     toolchain.merge(binary_thin, hook, out_thin, allow_new_dylibs=target.allow_new_dylibs)
 
 
+@traced('Обработка FAT', 'binary')
 def _patch_fat(target: Target, info: macho.MachOInfo, binary: str,
                out_fat: str, tmp: str) -> None:
     """FAT: смёрджить поддерживаемые слайсы под свою арку, остальные оставить, собрать lipo."""
@@ -76,6 +86,7 @@ def _patch_fat(target: Target, info: macho.MachOInfo, binary: str,
     macho.replace_slices(binary, replacements, out_fat)
 
 
+@traced('Патч таргета', 'binary', 'out')
 def patch_target(target: Target, signing: Signing, binary: str, out: str,
                  do_sign: bool = True) -> str:
     """Пропатчить бинарь `binary`, результат в `out`. Подпись опциональна.

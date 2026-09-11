@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import os
+from .diagnostics import traced
 import tomllib
 from dataclasses import dataclass, field
 
@@ -45,12 +46,20 @@ def _abs(base: str, p: str | None) -> str | None:
     return p if os.path.isabs(p) else os.path.normpath(os.path.join(base, p))
 
 
+@traced('Чтение конфига', 'path')
 def load(path: str) -> Config:
     with open(path, "rb") as f:
         raw = tomllib.load(f)
     base = os.path.dirname(os.path.abspath(path))
 
     s = raw.get("signing", {})
+    if not isinstance(s, dict):
+        raise ValueError("signing должен быть TOML-таблицей")
+    if "use_ldid" in s and not isinstance(s["use_ldid"], bool):
+        raise ValueError("signing.use_ldid должен быть true/false")
+    for key in ("identity", "entitlements"):
+        if key in s and (not isinstance(s[key], str) or not s[key].strip()):
+            raise ValueError(f"signing.{key} должен быть непустой строкой")
     signing = Signing(
         identity=s.get("identity", "-"),
         entitlements=_abs(base, s.get("entitlements")),
@@ -61,7 +70,20 @@ def load(path: str) -> Config:
     entries = raw.get("target", [])
     if isinstance(entries, dict):  # одиночный [target] вместо [[target]]
         entries = [entries]
+    if not isinstance(entries, list):
+        raise ValueError("target должен быть таблицей [target] или списком [[target]]")
     for i, t in enumerate(entries):
+        if not isinstance(t, dict):
+            raise ValueError(f"target #{i}: ожидается таблица [[target]]")
+        for key in ("binary", "name", "dylib", "out"):
+            if key in t and (not isinstance(t[key], str) or not t[key].strip()):
+                raise ValueError(f"target #{i}: {key} должен быть непустой строкой")
+        for key in ("sources", "ldflags"):
+            if key in t and (not isinstance(t[key], list) or
+                             any(not isinstance(x, str) or not x.strip() for x in t[key])):
+                raise ValueError(f"target #{i}: {key} должен быть массивом строк")
+        if "allow_new_dylibs" in t and not isinstance(t["allow_new_dylibs"], bool):
+            raise ValueError(f"target #{i}: allow_new_dylibs должен быть true/false")
         if "binary" not in t:
             raise ValueError(f"target #{i}: нет обязательного поля 'binary'")
         name = t.get("name", os.path.basename(t["binary"]))
