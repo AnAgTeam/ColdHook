@@ -221,3 +221,29 @@ Local macOS fixtures are in `tests/macos/`; C/Swift examples are in `tests/hooks
 ## License
 
 ColdHook is released under the MIT license. Licenses for vendored components are in `vendor/`.
+
+
+## Python CLI diagnostics
+
+Python 3.11+ and LIEF >=0.17 are required. Run `python3 -m coldhook doctor`
+to check LIEF, merger discovery/executable permissions, and `lipo`/`otool`.
+This checks the merger file, not its runtime compatibility or version.
+Compilation additionally needs `xcrun` and a suitable SDK; signing needs
+`codesign` or `ldid`. Apple tools are still required for Mach-O inspection.
+
+Use `python3 -m coldhook --log-file coldhook.log patch -c coldhook.toml`
+for a detailed appended diagnostic log, or `--debug` for console tracebacks.
+Both flags go before the subcommand. Errors include stages, paths, and failed
+command output. Processing commands check LIEF before work begins.
+
+Merger search order: explicit `COLDHOOK_MERGER` path (supports `~`), current
+working directory, `PATH`, bundled `bin/`, package directory, then the legacy
+`vendor/MachOMerger/.build/release/` build. An invalid explicit environment
+path fails without fallback. The filename is `MachOMerger.exe` on Windows.
+No source checkout is needed when supplying a binary; no download is performed.
+
+See [the Russian diagnostics notes](README.ru.md#диагностика-python-cli) for
+common configuration, filesystem, archive, architecture, SDK, and signing errors.
+
+
+Tests: see [tests/README.md](tests/README.md) for the unified pytest runner, macOS and simulator options.

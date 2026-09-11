@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import glob
 import os
+from .diagnostics import traced
 import pathlib
 import shutil
 import subprocess
@@ -20,7 +21,7 @@ from .config import Config
 
 try:
     import lief
-except ImportError:  # pragma: no cover - dependency is declared in pyproject.toml
+except (ImportError, OSError):  # pragma: no cover - dependency is declared in pyproject.toml
     lief = None
 
 
@@ -110,6 +111,7 @@ def _validate_shared_selectors(app: str, dylib: str) -> None:
                 "Укажи bundle-relative или абсолютный путь в макросе.")
 
 
+@traced('Shared-патч бинарника', 'target')
 def _merge_shared(target: str, dylib: str, out: str, import_path: str | None) -> None:
     """Merge a shared hook into a thin image or every compatible FAT slice."""
     info = build.macho.inspect(target)
@@ -136,11 +138,10 @@ def _merge_shared(target: str, dylib: str, out: str, import_path: str | None) ->
 
 
 def _run(cmd: list[str], what: str, cwd: str | None = None) -> None:
-    p = subprocess.run(cmd, capture_output=True, text=True, cwd=cwd)
-    if p.returncode != 0:
-        raise PatchError(f"{what} упало: {p.stderr.strip() or p.stdout.strip()}")
+    build.toolchain._run(cmd, what, cwd=cwd)
 
 
+@traced('Распаковка IPA', 'path')
 def _unpack_ipa(path: str, destination: str) -> None:
     try:
         with zipfile.ZipFile(path) as archive:
@@ -149,6 +150,7 @@ def _unpack_ipa(path: str, destination: str) -> None:
         raise PatchError(f"unzip упало: {exc}") from exc
 
 
+@traced('Упаковка IPA', 'output')
 def _pack_ipa(stage: str, output: str) -> None:
     try:
         with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as archive:
@@ -161,6 +163,7 @@ def _pack_ipa(stage: str, output: str) -> None:
         raise PatchError(f"zip упало: {exc}") from exc
 
 
+@traced('Поиск приложения', 'root')
 def _find_app(root: str) -> str:
     """Найти .app: для IPA — Payload/*.app; если root сам .app — он и есть."""
     if root.endswith(".app") and os.path.isdir(root):
@@ -173,6 +176,7 @@ def _find_app(root: str) -> str:
     return cands[0]
 
 
+@traced('Патч бандла', 'inp', 'out')
 def patch_bundle(inp: str, config: Config, out: str, do_sign: bool = False) -> str:
     build.toolchain.ensure_merger()
     is_ipa = inp.lower().endswith(".ipa") or os.path.isfile(inp)
