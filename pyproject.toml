@@ -25,3 +25,11 @@ coldhook = [
   "runtime/*",
   "substrate/**/*",
 ]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"
+markers = [
+  "native: compiles and executes macOS arm64 fixtures (requires --run-native)",
+  "simulator: iOS Simulator integration (requires --run-simulator and --simulator-udid)",
+]

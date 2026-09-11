@@ -21,7 +21,7 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))
-MERGER = os.path.join(ROOT, "vendor", "MachOMerger", ".build", "release", "MachOMerger")
+MERGER = os.environ.get("COLDHOOK_MERGER") or os.path.join(ROOT, "vendor", "MachOMerger", ".build", "release", "MachOMerger")
 INCLUDE = os.path.join(ROOT, "coldhook", "include")
 PREPASS = os.path.join(ROOT, "coldhook", "logos_prepass.py")
 SUBINC = os.path.join(ROOT, "coldhook", "substrate")
@@ -78,7 +78,7 @@ def build_case(tag, with_bootstrap):
     xsrc = p(f"Tweak_{tag}.x")
     with open(xsrc, "w") as f:
         f.write(TWEAK_SRC)
-    r = subprocess.run(["python3", PREPASS, xsrc], capture_output=True, text=True)
+    r = subprocess.run([sys.executable, PREPASS, xsrc], capture_output=True, text=True)
     if r.returncode != 0: fail(f"пре-пасс/logos ({tag}):\n{r.stderr[-900:]}")
     mm = r.stdout
     if "MSHookMessageEx" not in mm: fail(f"[{tag}] logos не сгенерил MSHookMessageEx (%hook не раскрылся)")

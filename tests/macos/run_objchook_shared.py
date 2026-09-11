@@ -7,7 +7,7 @@ HERE = Path(__file__).resolve().parent; ROOT = HERE.parents[1]
 BUILD = HERE / "build" / "objchook_shared"
 PRE = ROOT / "coldhook/logos_prepass.py"; INC = ROOT / "coldhook/include"
 SUB = ROOT / "coldhook/substrate"; THEOS = Path(os.environ.get("THEOS", Path.home()/"theos"))
-LOGOS = THEOS / "bin/logos.pl"; MERGER = ROOT / "vendor/MachOMerger/.build/release/MachOMerger"
+LOGOS = THEOS / "bin/logos.pl"; MERGER = os.environ.get("COLDHOOK_MERGER") or ROOT / "vendor/MachOMerger/.build/release/MachOMerger"
 
 def run(cmd, **kw): return subprocess.run([str(x) for x in cmd], **kw)
 

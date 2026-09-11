@@ -19,7 +19,7 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))
-MERGER = os.path.join(ROOT, "vendor", "MachOMerger", ".build", "release", "MachOMerger")
+MERGER = os.environ.get("COLDHOOK_MERGER") or os.path.join(ROOT, "vendor", "MachOMerger", ".build", "release", "MachOMerger")
 BUILD = os.path.join(HERE, "build", "nosplit")
 SPLIT = ["-Wl,-fixup_chains", "-Xlinker", "-add_split_seg_info"]
 PAD = ["-Wl,-headerpad,0x4000"]
