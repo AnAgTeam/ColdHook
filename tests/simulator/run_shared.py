@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import sys
 import plistlib
 import subprocess
 import shutil
@@ -125,7 +126,7 @@ def main() -> int:
 
     patched = derived / "TestSwiftApp-coldhook.app"
     run([
-        "python3", "-m", "coldhook", "shared", str(app),
+        sys.executable, "-m", "coldhook", "shared", str(app),
         "--dylib", str(dylib), "--runtime", str(runtime),
         "--out", str(patched), "--verbose", "--skip-unsupported",
     ], cwd=ROOT)

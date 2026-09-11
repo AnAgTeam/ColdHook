@@ -30,7 +30,7 @@ def run_prepass(src_text):
     x = os.path.join(BUILD, "T.x")
     with open(x, "w") as f:
         f.write(src_text)
-    return subprocess.run(["python3", PREPASS, "--strip-only", x], capture_output=True, text=True)
+    return subprocess.run([sys.executable, PREPASS, "--strip-only", x], capture_output=True, text=True)
 
 
 def main():
