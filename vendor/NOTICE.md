@@ -1,22 +1,39 @@
 # Vendored third-party code
 
-Этот каталог содержит код из проекта **Dopamine** (https://github.com/opa334/Dopamine,
-ветка `2.x`), распространяемого под лицензией **MIT** (глобальный `LICENSE.md` репозитория,
-© 2023–2024 Lars Fröder / opa334). Копия лицензии — `vendor/LICENSE-Dopamine.md`.
+## Dopamine
 
-## Что завендорено
+Каталог содержит код, первоначально импортированный из ветки `2.x`
+проекта [Dopamine](https://github.com/opa334/Dopamine), ревизия
+[`5e2733d3677975d5e81093b343a0de7f676aaf08`](https://github.com/opa334/Dopamine/commit/5e2733d3677975d5e81093b343a0de7f676aaf08):
 
-- `vendor/MachOMerger/` — из `BaseBin/MachOMerger`. Автор движка слияния — Linus Henze.
-- `vendor/dyldhook/`    — из `BaseBin/dyldhook` (референс использования макросов `HOOK()`/`ORIG()`).
+- `vendor/MachOMerger/` — из `BaseBin/MachOMerger`; автор исходного движка
+  слияния — Linus Henze;
+- `vendor/dyldhook/` — из `BaseBin/dyldhook`, используется как референс макросов
+  `HOOK()` и `ORIG()`.
 
-## Локальные модификации MachOMerger (ColdHook)
-
-Изменения внесены в `vendor/MachOMerger/Sources/MachOMerger/`, помечены комментариями `ColdHook:`:
-
-- `main.swift` — `hdr.filetype = a.filetype.rawValue` вместо хардкода `MH_DYLINKER`
-  (иначе dyld не грузит результат как dylib);
-- `main.swift` — сохранение `LC_LOAD_DYLIB` целевого бинаря (иначе «missing LC_LOAD_DYLIB»);
-- `SegmentLoadCommand.swift` — выставление флага `SG_READ_ONLY` на `__DATA_CONST`/`__AUTH_CONST`
-  (иначе «__DATA_CONST segment missing SG_READ_ONLY flag» при загрузке).
-
+Dopamine распространяется под лицензией MIT, Copyright (c) 2023–2024
+Lars Fröder (opa334). Копия лицензии находится в `vendor/LICENSE-Dopamine.md`.
 Оригинальные copyright-заголовки в исходниках сохранены.
+
+## Форк MachOMerger в ColdHook
+
+`vendor/MachOMerger/` — поддерживаемый форк, который существенно отличается от
+исходников Dopamine. Изменения ColdHook затрагивают алгоритмы слияния,
+обработку load commands, сегментов, символов, релокаций и chained fixups,
+добавляют append- и shared-режимы, FAT Mach-O и кроссплатформенную сборку.
+
+История Git является полным реестром локальных изменений. Комментарии `ColdHook:`
+в отдельных участках кода объясняют конкретные решения, но не являются полным
+списком отличий от upstream.
+
+## SwiftPM-зависимости MachOMerger
+
+Сборка MachOMerger использует [SwiftUtils](https://github.com/pinauten/SwiftUtils) и
+[SwiftMachO](https://github.com/pinauten/SwiftMachO). Оба проекта распространяются под лицензией MIT:
+
+- SwiftUtils — Copyright (c) 2021 Pinauten GmbH;
+- SwiftMachO — Copyright (c) 2021/2022 Pinauten GmbH.
+
+Их исходники не хранятся в `vendor/`: SwiftPM загружает их при сборке. Используемые
+ревизии закреплены в `vendor/MachOMerger/Package.resolved`; полные тексты лицензий
+находятся в их upstream-репозиториях.
