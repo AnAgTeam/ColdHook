@@ -97,7 +97,7 @@ func generateSegmentLoadCommands(infoA: MachOMergeData, infoB: MachOMergeData, r
             // vmaddr V -> file V-base). Через vmaddr-offset было неверно при разной базе A/B
             // (исполняемый: A@0x100000000, B@0 -> переполнение UInt32). zerofill оставляем 0.
             sectLC.offset = (sect.offset == 0) ? 0 : UInt32(sectLC.addr &- coldhookBase)
-            sectLC.align = sect.alignment
+            sectLC.align = coldhookSectionAlignment(sect.alignment)
             sectLC.flags = sect.flags.rawValue
             sectLC.reserved1 = sect.reserved1
             sectLC.reserved2 = sect.reserved2
@@ -124,7 +124,7 @@ func generateSegmentLoadCommands(infoA: MachOMergeData, infoB: MachOMergeData, r
                 sectLC.addr = sect.address + seg.1[1].offset
                 sectLC.size = sect.size
                 sectLC.offset = (sect.offset == 0) ? 0 : UInt32(sectLC.addr &- coldhookBase)
-                sectLC.align = sect.alignment
+                sectLC.align = coldhookSectionAlignment(sect.alignment)
                 sectLC.flags = sect.flags.rawValue
                 sectLC.reserved1 = sect.reserved1
                 sectLC.reserved2 = sect.reserved2

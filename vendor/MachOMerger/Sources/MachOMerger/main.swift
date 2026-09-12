@@ -294,7 +294,37 @@ if coldhookModeArg == "shared" {
         }
         let oldLinkeditOff = Int(linkeditCommand.fileOffset)
         let oldLinkeditEnd = oldLinkeditOff + Int(linkeditCommand.fileSize)
-        let linkeditBytes = linkeditData
+        var linkeditBytes = linkeditData
+
+        // Two synthetic LC_SEGMENT_64 commands are inserted before the rebuilt
+        // __LINKEDIT.  dyld requires chained_starts_in_image.seg_count to match
+        // the complete segment-command count, even though neither new segment
+        // contains fixups.  Expand the offset array and retain the growth point
+        // so every later __LINKEDIT payload is shifted consistently below.
+        var chainedFixupsOldEnd: Int? = nil
+        var chainedFixupsGrowth = 0
+        var scanPos = 0x20
+        let scanCount = Int(aFile.getGeneric(type: UInt32.self, offset: 0x10))
+        for _ in 0..<scanCount {
+            let type = aFile.getGeneric(type: UInt32.self, offset: UInt(scanPos))
+            let size = Int(aFile.getGeneric(type: UInt32.self, offset: UInt(scanPos + 4)))
+            if type == UInt32(LC_DYLD_CHAINED_FIXUPS) {
+                let dataOff = Int(aFile.getGeneric(type: UInt32.self, offset: UInt(scanPos + 8)))
+                let dataSize = Int(aFile.getGeneric(type: UInt32.self, offset: UInt(scanPos + 12)))
+                let relative = dataOff - oldLinkeditOff
+                guard relative >= 0, relative + dataSize <= linkeditBytes.count,
+                      let expanded = coldhookExpandChainedFixupsForSegments(
+                          linkeditBytes.subdata(in: relative..<(relative + dataSize)),
+                          addedSegments: 2) else {
+                    throw ColdhookSharedAssemblerError.payloadNotContiguous("chained fixups")
+                }
+                linkeditBytes.replaceSubrange(relative..<(relative + dataSize), with: expanded)
+                chainedFixupsGrowth = expanded.count - dataSize
+                chainedFixupsOldEnd = dataOff + dataSize
+                break
+            }
+            scanPos += size
+        }
         let materializedEnd = assembly.targetData.segments.map { Int($0.0.fileOffset) + $0.1.count }.max() ?? aFile.count
         let payloadEnd = max(Int(assembly.plan.layout.stubFileOffset + assembly.plan.layout.stubSize),
                              Int(assembly.plan.layout.tableFileOffset + assembly.plan.layout.tableSize))
@@ -333,11 +363,25 @@ if coldhookModeArg == "shared" {
                 func shift(_ at: Int) {
                     let value = patched.getGeneric(type: UInt32.self, offset: UInt(at))
                     if Int(value) >= oldLinkeditOff && Int(value) < oldLinkeditEnd {
-                        patched.replaceSubrange(at..<(at + 4), with: Data(fromObject: UInt32(Int(value) + linkeditOff - oldLinkeditOff)))
+                        var relative = Int(value) - oldLinkeditOff
+                        if let chainedFixupsOldEnd, Int(value) >= chainedFixupsOldEnd {
+                            relative += chainedFixupsGrowth
+                        }
+                        patched.replaceSubrange(at..<(at + 4),
+                                                with: Data(fromObject: UInt32(linkeditOff + relative)))
                     }
                 }
-                if type == UInt32(LC_DYLD_CHAINED_FIXUPS) || type == UInt32(LC_DYLD_EXPORTS_TRIE) ||
-                   type == UInt32(LC_FUNCTION_STARTS) || type == UInt32(LC_DATA_IN_CODE) { shift(8) }
+                if type == UInt32(LC_DYLD_CHAINED_FIXUPS) {
+                    shift(8)
+                    if chainedFixupsGrowth != 0 {
+                        let oldSize = patched.getGeneric(type: UInt32.self, offset: 12)
+                        patched.replaceSubrange(12..<16,
+                                                with: Data(fromObject: oldSize + UInt32(chainedFixupsGrowth)))
+                    }
+                } else if type == UInt32(LC_DYLD_EXPORTS_TRIE) ||
+                          type == UInt32(LC_FUNCTION_STARTS) || type == UInt32(LC_DATA_IN_CODE) {
+                    shift(8)
+                }
                 if type == UInt32(LC_DYLD_INFO) || type == UInt32(LC_DYLD_INFO_ONLY) {
                     shift(8); shift(16); shift(24); shift(32); shift(40)
                 }
@@ -972,7 +1016,7 @@ func coldhookAppendAssemble(targetDataInput: MachOMergeData = dataA,
             s.addr   = sect.address &+ part.offset
             s.size   = sect.size
             s.offset = (sect.offset == 0) ? 0 : UInt32(s.addr &- coldhookBase)
-            s.align  = sect.alignment
+            s.align  = coldhookSectionAlignment(sect.alignment)
             s.flags  = sect.flags.rawValue
             s.reserved1 = sect.reserved1
             s.reserved2 = sect.reserved2

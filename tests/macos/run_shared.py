@@ -2,6 +2,7 @@
 """End-to-end smoke test for MachOMerger's shared-table backend."""
 import os
 import shutil
+import struct
 import subprocess
 import sys
 
@@ -9,6 +10,91 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))
 MERGER = os.environ.get("COLDHOOK_MERGER") or os.path.join(ROOT, "vendor", "MachOMerger", ".build", "release", "MachOMerger")
 BUILD = os.path.join(HERE, "build", "shared_mode")
+
+LC_SEGMENT_64 = 0x19
+LC_DYLD_CHAINED_FIXUPS = 0x80000034
+
+
+def macho_metadata(path):
+    data = open(path, "rb").read()
+    if len(data) < 32 or struct.unpack_from("<I", data)[0] != 0xfeedfacf:
+        raise RuntimeError(f"not a little-endian Mach-O 64 binary: {path}")
+    command_count = struct.unpack_from("<I", data, 16)[0]
+    position = 32
+    segments = []
+    sections = {}
+    chained = None
+    for _ in range(command_count):
+        if position + 8 > len(data):
+            raise RuntimeError("truncated Mach-O load commands")
+        command, size = struct.unpack_from("<II", data, position)
+        if size < 8 or position + size > len(data):
+            raise RuntimeError("invalid Mach-O load command size")
+        if command == LC_SEGMENT_64:
+            segment_name = data[position + 8:position + 24].rstrip(b"\0").decode("ascii")
+            section_count = struct.unpack_from("<I", data, position + 64)[0]
+            segments.append(segment_name)
+            for index in range(section_count):
+                section = position + 72 + index * 80
+                if section + 80 > position + size:
+                    raise RuntimeError("truncated Mach-O section table")
+                section_name = data[section:section + 16].rstrip(b"\0").decode("ascii")
+                section_segment = data[section + 16:section + 32].rstrip(b"\0").decode("ascii")
+                alignment = struct.unpack_from("<I", data, section + 52)[0]
+                sections[(section_segment, section_name)] = alignment
+        elif command == LC_DYLD_CHAINED_FIXUPS:
+            data_offset, data_size = struct.unpack_from("<II", data, position + 8)
+            blob = data[data_offset:data_offset + data_size]
+            if len(blob) != data_size or len(blob) < 28:
+                raise RuntimeError("truncated chained-fixups payload")
+            starts_offset, imports_offset, symbols_offset = struct.unpack_from("<III", blob, 4)
+            segment_count = struct.unpack_from("<I", blob, starts_offset)[0]
+            offsets = list(struct.unpack_from(
+                f"<{segment_count}I", blob, starts_offset + 4))
+            chained = {
+                "data_size": data_size,
+                "starts_offset": starts_offset,
+                "imports_offset": imports_offset,
+                "symbols_offset": symbols_offset,
+                "segment_count": segment_count,
+                "offsets": offsets,
+            }
+        position += size
+    if chained is None:
+        raise RuntimeError("LC_DYLD_CHAINED_FIXUPS is missing")
+    return {"segments": segments, "sections": sections, "chained": chained}
+
+
+def verify_shared_metadata(target, merged):
+    before = macho_metadata(target)
+    after = macho_metadata(merged)
+    old = before["chained"]
+    new = after["chained"]
+
+    if len(after["segments"]) != len(before["segments"]) + 2:
+        raise RuntimeError("shared output did not add exactly two segment commands")
+    if new["segment_count"] != len(after["segments"]):
+        raise RuntimeError("chained-fixups segment count does not match LC_SEGMENT_64 count")
+    if new["data_size"] != old["data_size"] + 8:
+        raise RuntimeError("chained-fixups payload was not expanded for two segments")
+    if new["offsets"][-2:] != [0, 0]:
+        raise RuntimeError("new chained-fixups segment offsets are not empty")
+
+    insertion = old["starts_offset"] + 4 + old["segment_count"] * 4
+    expected_offsets = [value + 8 if value and old["starts_offset"] + value >= insertion else value
+                        for value in old["offsets"]] + [0, 0]
+    if new["offsets"] != expected_offsets:
+        raise RuntimeError("chained-fixups segment offsets were not relocated correctly")
+    for field in ("imports_offset", "symbols_offset"):
+        expected = old[field] + (8 if old[field] >= insertion else 0)
+        if new[field] != expected:
+            raise RuntimeError(f"chained-fixups {field} was not relocated correctly")
+
+    probe = ("__DATA", "__coldhook_probe")
+    if before["sections"].get(probe) != 4:
+        raise RuntimeError("fixture's 16-byte section name/alignment is invalid")
+    if after["sections"].get(probe) != before["sections"][probe]:
+        raise RuntimeError("shared output corrupted a 16-byte section name or alignment")
 
 def run(cmd, **kw):
     print("  $ " + " ".join(cmd), flush=True)
@@ -41,6 +127,8 @@ def main():
         f.write('#include <unistd.h>\n'
                 'const char *domain_for(int);\n'
                 'void *coldhook_writable_anchor = (void *)domain_for;\n'
+                '__attribute__((used, visibility("default"), aligned(16), '
+                'section("__DATA,__coldhook_probe"))) unsigned char coldhook_probe[16];\n'
                 '__attribute__((visibility("default"))) const char *domain_for(int n){\n'
                 '  if (getpid() > 0 && n == 0) return "ORIG"; __builtin_trap(); }\n'
                 '__attribute__((visibility("default"))) const char *other_for(int n){\n'
@@ -122,6 +210,7 @@ def main():
     sys.stdout.write(result.stdout); sys.stderr.write(result.stderr)
     if result.returncode:
         raise RuntimeError("shared merge failed")
+    verify_shared_metadata(target, merged)
     # The very same dylib is deliberately offered to another Mach-O.  Its
     # CH_DYN selector is libtarget, so MachOMerger must leave libother untouched.
     shutil.copyfile(target, other_target)

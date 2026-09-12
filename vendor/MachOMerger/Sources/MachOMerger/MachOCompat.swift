@@ -9,10 +9,20 @@ import Foundation
 func setMachOName<T>(_ field: inout T, _ value: String) {
     withUnsafeMutableBytes(of: &field) { raw in
         raw.initializeMemory(as: UInt8.self, repeating: 0)
-        for (index, byte) in value.utf8.prefix(raw.count - 1).enumerated() {
+        // Mach-O names are fixed-width char[16], not necessarily C strings.
+        // A name that occupies all 16 bytes (for example __objc_classlist)
+        // must not lose its final byte merely to reserve a NUL terminator.
+        for (index, byte) in value.utf8.prefix(raw.count).enumerated() {
             raw[index] = byte
         }
     }
+}
+
+// SwiftMachO's current Section64 parser stores the wire exponent shifted left
+// once.  Convert it back before serializing a section_64 header.
+@inline(__always)
+func coldhookSectionAlignment(_ parsedAlignment: UInt32) -> UInt32 {
+    parsedAlignment >> 1
 }
 
 let MH_MAGIC_64: UInt32 = 0xfeedfacf

@@ -20,6 +20,58 @@ func coldhookImportSize(_ format: UInt32) -> Int {
     return format == 1 ? 4 : (format == 2 ? 8 : 16)
 }
 
+// Shared mode inserts synthetic RX/RW segments immediately before __LINKEDIT.
+// dyld_chained_starts_in_image must contain one seg_info_offset for every
+// LC_SEGMENT_64.  Keep the existing (always empty) __LINKEDIT entry as the
+// first inserted segment and append zero entries for the remaining synthetic
+// segment(s) plus the relocated __LINKEDIT.  Segment-start records and the
+// imports/symbols tables move forward by the size of the added offset entries.
+func coldhookExpandChainedFixupsForSegments(_ blob: Data, addedSegments: Int) -> Data? {
+    guard addedSegments > 0, blob.count >= 28 else { return blob }
+
+    let startsOffset = Int(blob.getGeneric(type: UInt32.self, offset: 4))
+    let importsOffset = Int(blob.getGeneric(type: UInt32.self, offset: 8))
+    let symbolsOffset = Int(blob.getGeneric(type: UInt32.self, offset: 12))
+    guard startsOffset >= 0, startsOffset + 4 <= blob.count else { return nil }
+
+    let oldCount = Int(blob.getGeneric(type: UInt32.self, offset: UInt(startsOffset)))
+    let offsetsStart = startsOffset + 4
+    let insertion = offsetsStart + oldCount * 4
+    guard oldCount > 0, insertion <= blob.count else { return nil }
+
+    // __LINKEDIT is the final segment and never owns pointer chains.  Shared
+    // mode inserts its two segments directly before it, so its zero entry can
+    // stand for the first new segment; appended zeroes cover the rest.
+    let lastOffset = blob.getGeneric(type: UInt32.self,
+                                     offset: UInt(offsetsStart + (oldCount - 1) * 4))
+    guard lastOffset == 0 else { return nil }
+
+    let delta = addedSegments * 4
+    var result = blob
+    result.insert(contentsOf: repeatElement(UInt8(0), count: delta), at: insertion)
+    result.replaceSubrange(startsOffset..<(startsOffset + 4),
+                           with: Data(fromObject: UInt32(oldCount + addedSegments)))
+
+    for index in 0..<oldCount {
+        let field = offsetsStart + index * 4
+        let value = blob.getGeneric(type: UInt32.self, offset: UInt(field))
+        if value != 0, startsOffset + Int(value) >= insertion {
+            result.replaceSubrange(field..<(field + 4),
+                                   with: Data(fromObject: value + UInt32(delta)))
+        }
+    }
+
+    if importsOffset >= insertion {
+        result.replaceSubrange(8..<12,
+                               with: Data(fromObject: UInt32(importsOffset + delta)))
+    }
+    if symbolsOffset >= insertion {
+        result.replaceSubrange(12..<16,
+                               with: Data(fromObject: UInt32(symbolsOffset + delta)))
+    }
+    return result
+}
+
 // Все команды загрузки dylib — все они входят в dylib-ordinal пространство биндов
 // (LC_ID_DYLIB сюда НЕ входит). Считать только LC_LOAD_DYLIB было бы неверно для
 // бинарей с weak/reexport/lazy/upward-зависимостями.
