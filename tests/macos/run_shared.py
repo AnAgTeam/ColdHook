@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """End-to-end smoke test for MachOMerger's shared-table backend."""
+import json
 import os
 import shutil
 import struct
@@ -118,6 +119,8 @@ def main():
     runtime = os.path.join(BUILD, "libcoldhook.dylib")
     hooks = os.path.join(BUILD, "libhooks.dylib")
     merged = os.path.join(BUILD, "libtarget.shared.dylib")
+    report_path = os.path.join(BUILD, "shared-report.json")
+    other_report_path = os.path.join(BUILD, "other-shared-report.json")
     driver = os.path.join(BUILD, "driver")
     target_src = os.path.join(BUILD, "target.c")
     hooks_src = os.path.join(BUILD, "hooks.c")
@@ -205,20 +208,33 @@ def main():
     }
     if exported != expected_exports:
         raise RuntimeError(f"unexpected hook exports: {sorted(exported)}")
-    result = run([MERGER, target, hooks, merged, "--mode", "shared"],
+    result = run([MERGER, target, hooks, merged, "--mode", "shared",
+                  "--report-json", report_path],
                  capture_output=True, text=True)
     sys.stdout.write(result.stdout); sys.stderr.write(result.stderr)
     if result.returncode:
         raise RuntimeError("shared merge failed")
+    report = json.load(open(report_path))
+    if (report.get("version") != 1 or report.get("status") != "patched"
+            or {hook["locator"] for hook in report.get("hooks", [])}
+            != {"domain_for", "other_for", f"COLDHOOK_ADDR_{offset}"}):
+        raise RuntimeError(f"unexpected shared JSON report: {report}")
+    if {hook["handler"] for hook in report["hooks"]} != {
+            "coldhook_gate_domain_for_hook", "other_for_hook", "offset_for_hook"}:
+        raise RuntimeError(f"unexpected handlers in shared JSON report: {report}")
     verify_shared_metadata(target, merged)
     # The very same dylib is deliberately offered to another Mach-O.  Its
     # CH_DYN selector is libtarget, so MachOMerger must leave libother untouched.
     shutil.copyfile(target, other_target)
-    result = run([MERGER, other_target, hooks, other_merged, "--mode", "shared"],
+    result = run([MERGER, other_target, hooks, other_merged, "--mode", "shared",
+                  "--report-json", other_report_path],
                  capture_output=True, text=True)
     sys.stdout.write(result.stdout); sys.stderr.write(result.stderr)
     if result.returncode or "no applicable hooks" not in result.stdout:
         raise RuntimeError("shared selector no-op failed")
+    other_report = json.load(open(other_report_path))
+    if other_report.get("status") != "no-applicable-hooks" or other_report.get("hooks") != []:
+        raise RuntimeError(f"unexpected shared no-op JSON report: {other_report}")
     if open(other_target, "rb").read() != open(other_merged, "rb").read():
         raise RuntimeError("shared no-op changed target bytes")
     check(["codesign", "-f", "-s", "-", merged], "codesign shared output")

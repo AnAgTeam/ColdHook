@@ -6,20 +6,20 @@ from .diagnostics import traced
 import shutil
 import tempfile
 
-from . import macho, toolchain
+from . import console, macho, toolchain
 from .config import Config, Signing, Target
 
-_USE_COLOR = os.name != "nt" and not os.environ.get("NO_COLOR")
-C_CYAN, C_RED, C_GREEN, C_YELL, C_RST = ((
-    "\033[1;36m", "\033[1;31m", "\033[1;32m", "\033[1;33m", "\033[0m")
-    if _USE_COLOR else ("", "", "", "", ""))
+# Kept as aliases for callers that historically imported the color constants
+# from this module.
+C_CYAN, C_RED, C_GREEN, C_YELL, C_RST = (
+    console.C_CYAN, console.C_RED, console.C_GREEN, console.C_YELL, console.C_RST)
 
 
 INCLUDE_DIR = os.path.join(os.path.dirname(__file__), "include")  # где лежит coldhook.h
 
 
 def _say(msg: str) -> None:
-    print(f"{C_CYAN}== {msg}{C_RST}")
+    console.stage(msg)
 
 
 class PatchError(RuntimeError):
@@ -130,7 +130,7 @@ def patch_target(target: Target, signing: Signing, binary: str, out: str,
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
-    print(f"{C_GREEN}OK [{target.name}] -> {out}{C_RST}")
+    console.success(f"Готово [{target.name}] -> {out}")
     return out
 
 

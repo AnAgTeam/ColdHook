@@ -25,20 +25,20 @@ class ToolError(RuntimeError):
 
 def _run(cmd: list[str], what: str, cwd: str | None = None) -> subprocess.CompletedProcess:
     rendered = shlex.join(cmd)
-    log.info("Этап: %s", what)
+    log.debug("Stage: %s", what)
     log.debug("cmd: %s; cwd: %s", rendered, cwd or os.getcwd())
     try:
         p = subprocess.run(cmd, capture_output=True, text=True, errors="replace", cwd=cwd)
     except OSError as exc:
-        hint = ("Проверь путь, права исполнения и совместимость бинарника с ОС/архитектурой."
+        hint = ("Check the path, execute permissions, and binary compatibility with the OS and architecture."
                 if not isinstance(exc, FileNotFoundError) else
-                "Проверь наличие инструмента в PATH и его runtime/загрузчика.")
-        raise ToolError(f"{what}: не удалось запустить {rendered}: {exc}. {hint}") from exc
+                "Check that the tool is on PATH and its runtime/loader is installed.")
+        raise ToolError(f"{what}: could not start {rendered}: {exc}. {hint}") from exc
     if p.returncode != 0:
-        raise ToolError(f"{what}: код завершения {p.returncode}\n"
+        raise ToolError(f"{what}: exit code {p.returncode}\n"
                         f"  cmd: {rendered}\n  cwd: {cwd or os.getcwd()}\n"
-                        f"  stderr: {p.stderr.strip() or '(пусто)'}\n"
-                        f"  stdout: {p.stdout.strip() or '(пусто)'}")
+                        f"  stderr: {p.stderr.strip() or '(empty)'}\n"
+                        f"  stdout: {p.stdout.strip() or '(empty)'}")
     if p.stderr.strip():
         log.warning("%s: %s", what, p.stderr.strip())
     log.debug("%s stdout: %s", what, p.stdout.strip())
@@ -58,27 +58,29 @@ def ensure_merger() -> str:
                        os.path.join(os.path.dirname(__file__), _merger_name), MERGER]
     for candidate in dict.fromkeys(candidates):
         if os.path.isfile(candidate) and (os.name == "nt" or os.access(candidate, os.X_OK)):
-            log.info("MachOMerger: %s", candidate)
+            log.debug("MachOMerger: %s", candidate)
             return candidate
-    raise ToolError("MachOMerger не найден или не исполняемый. Проверены: "
+    raise ToolError("MachOMerger was not found or is not executable. Checked: "
                     + ", ".join(candidates)
-                    + ". Укажи COLDHOOK_MERGER=/полный/путь/к/" + _merger_name
-                    + ", положи бинарник в текущий каталог или PATH; на Unix проверь chmod +x."
-                    + (" Явный COLDHOOK_MERGER запрещает подстановку другого бинарника." if configured else ""))
+                    + ". Set COLDHOOK_MERGER to the full path of " + _merger_name
+                    + ", or place the binary in the current directory or PATH; on Unix check execute permissions."
+                    + (" An explicit COLDHOOK_MERGER disables fallback discovery." if configured else ""))
 
 
 def require_tools(*names: str) -> None:
     missing = [name for name in names if not shutil.which(name)]
     if missing:
-        raise ToolError("Не найдены инструменты в PATH: " + ", ".join(missing)
-                        + ". Для lipo/otool/xcrun/codesign установи Xcode Command Line Tools "
-                        "на macOS и проверь xcode-select; ldid устанавливается отдельно.")
+        raise ToolError("Required tools not found in PATH: " + ", ".join(missing)
+                        + ". Install the requested tools and add them to PATH. "
+                        "xcrun/codesign require macOS and Apple's command-line tools; "
+                        "ldid is installed separately. Prebuilt unsigned patching does not "
+                        "require Apple command-line tools.")
 
 
 def _sdk_path(sdk: str) -> str:
-    p = _run(["xcrun", "--sdk", sdk, "--show-sdk-path"], f"поиск SDK {sdk}")
+    p = _run(["xcrun", "--sdk", sdk, "--show-sdk-path"], f"Finding SDK {sdk}")
     if not p.stdout.strip():
-        raise ToolError(f"xcrun вернул пустой путь SDK '{sdk}'; проверь установку Xcode")
+        raise ToolError(f"xcrun returned an empty SDK path for '{sdk}'; check the Xcode installation")
     return p.stdout.strip()
 
 
@@ -116,11 +118,13 @@ def hook_clang_cmd(sources: list[str], out: str, arch: str,
 def build_hook(sources: list[str], out: str, arch: str, platform: str, minos: str,
                extra: list[str] | None = None) -> None:
     os.makedirs(os.path.dirname(os.path.abspath(out)) or ".", exist_ok=True)
-    _run(hook_clang_cmd(sources, out, arch, platform, minos, extra=extra), "сборка хука")
+    _run(hook_clang_cmd(sources, out, arch, platform, minos, extra=extra), "Building hook")
 
 
 def merge(target: str, hook: str, out: str, allow_new_dylibs: bool = False,
-          mode: str | None = None, import_path: str | None = None) -> None:
+          mode: str | None = None, import_path: str | None = None,
+          report_json: str | None = None,
+          target_path: str | None = None) -> subprocess.CompletedProcess:
     cmd = [ensure_merger(), target, hook, out]
     if allow_new_dylibs:
         cmd.append("--allow-new-dylibs")
@@ -128,7 +132,11 @@ def merge(target: str, hook: str, out: str, allow_new_dylibs: bool = False,
         cmd += ["--mode", mode]
     if import_path:
         cmd += ["--import-path", import_path]
-    _run(cmd, "merge")
+    if report_json:
+        cmd += ["--report-json", report_json]
+    if target_path:
+        cmd += ["--target-path", target_path]
+    return _run(cmd, "merge")
 
 
 def sign(path: str, identity: str = "-", entitlements: str | None = None,

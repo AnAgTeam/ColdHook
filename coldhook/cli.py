@@ -7,40 +7,39 @@ import logging
 import importlib
 import re
 
-from .diagnostics import log, stage
-from . import toolchain
+from .diagnostics import DiagnosticError, log, stage
+from . import console, toolchain
 
 from . import __version__, config, macho
-from .build import C_RED, C_RST, PatchError, patch_all, patch_target
+from .build import PatchError, patch_all, patch_target
 from .config import Signing, Target
 from .toolchain import ToolError
 
 
 def _add_sign_args(p: argparse.ArgumentParser) -> None:
     p.add_argument("--sign", default="-", metavar="ID",
-                   help="codesign identity ('-' = adhoc, по умолчанию) или имя серта")
-    p.add_argument("--ldid", action="store_true", help="подписывать через ldid вместо codesign")
-    p.add_argument("--ent", metavar="FILE", help="entitlements для подписи")
+                   help="codesign identity ('-' = ad hoc, default) or certificate name")
+    p.add_argument("--ldid", action="store_true", help="sign using ldid instead of codesign")
+    p.add_argument("--ent", metavar="FILE", help="signing entitlements")
 
 
 def cmd_info(args) -> int:
-    toolchain.require_tools("lipo", "otool")
     info = macho.inspect(args.binary)
     print(f"path:     {info.path}")
     print(f"archs:    {', '.join(info.archs)}{'  (FAT)' if info.is_fat else ''}")
     print(f"slice:    {info.arch}")
     print(f"filetype: {info.filetype}")
     print(f"platform: {info.platform} {info.minos}")
-    print(f"cryptid:  {info.cryptid}{'  (ЗАШИФРОВАН)' if info.encrypted else ''}")
+    print(f"cryptid:  {info.cryptid}{'  (ENCRYPTED)' if info.encrypted else ''}")
     return 0
 
 
 def cmd_merge(args) -> int:
     if args.dylib and args.src:
-        print("укажи либо --src, либо --dylib, не оба", file=sys.stderr)
+        print("Specify either --src or --dylib, not both", file=sys.stderr)
         return 2
     if not args.dylib and not args.src:
-        print("нужен хук: --src <файл> (повторяемо) или --dylib <готовый>", file=sys.stderr)
+        print("A hook is required: --src <file> (repeatable) or --dylib <prebuilt>", file=sys.stderr)
         return 2
     target = Target(name=args.name or "merge", binary=args.target,
                     sources=args.src or [], dylib=args.dylib, out=args.out,
@@ -54,7 +53,7 @@ def cmd_merge(args) -> int:
 
 def cmd_patch(args) -> int:
     cfg = config.load(args.config)
-    print(f"конфиг: {args.config}  ({len(cfg.targets)} таргет(ов))")
+    print(f"Config: {args.config}  ({len(cfg.targets)} targets)")
     _check_patch_tools(cfg.targets, cfg.signing, not args.no_sign)
     patch_all(cfg, do_sign=not args.no_sign)
     return 0
@@ -63,7 +62,7 @@ def cmd_patch(args) -> int:
 def cmd_ipa(args) -> int:
     from . import ipa
     cfg = config.load(args.config)
-    print(f"конфиг: {args.config}  ({len(cfg.targets)} таргет(ов))")
+    print(f"Config: {args.config}  ({len(cfg.targets)} targets)")
     # для бандла подпись по умолчанию ВЫКЛ; включается явным --sign-bundle
     _check_patch_tools(cfg.targets, cfg.signing, args.sign_bundle)
     ipa.patch_bundle(args.input, cfg, args.out, do_sign=args.sign_bundle)
@@ -73,7 +72,8 @@ def cmd_ipa(args) -> int:
 def cmd_shared(args) -> int:
     from . import ipa
     toolchain.ensure_merger()
-    toolchain.require_tools("lipo", "otool", *(["codesign"] if args.sign_bundle else []))
+    if args.sign_bundle:
+        toolchain.require_tools("codesign")
     return 0 if ipa.patch_shared_bundle(args.input, args.dylib, args.out,
                                         do_sign=args.sign_bundle,
                                         import_path=args.import_path,
@@ -83,25 +83,25 @@ def cmd_shared(args) -> int:
 
 
 def _check_python_dependencies():
-    with stage("Проверка Python-зависимостей"):
+    with stage("Checking Python dependencies"):
         try:
             module = importlib.import_module("lief")
             version = getattr(module, "__version__", "unknown")
             match = re.match(r"(\d+)\.(\d+)", version)
             if not match or tuple(map(int, match.groups())) < (0, 17):
-                raise ImportError(f"нужен lief>=0.17, установлен {version}")
+                raise ImportError(f"Requires lief>=0.17; installed: {version}")
             if not hasattr(module, "MachO"):
-                raise ImportError("LIEF собран без поддержки Mach-O")
+                raise ImportError("LIEF was built without Mach-O support")
         except (ImportError, OSError) as exc:
-            raise ToolError(f"LIEF недоступен: {exc}. Установи в используемый Python "
+            raise ToolError(f"LIEF is unavailable: {exc}. Install it for the active Python interpreter "
                             f"({sys.executable}): python -m pip install --upgrade 'lief>=0.17'") from exc
-        log.info("Python: %s; LIEF: %s", sys.executable, version)
+        log.debug("Python: %s; LIEF: %s", sys.executable, version)
 
 
 def _check_patch_tools(targets, signing, do_sign):
-    with stage("Проверка инструментов"):
+    with stage("Checking tools"):
         toolchain.ensure_merger()
-        names = ["lipo", "otool"]
+        names = []
         if any(t.sources for t in targets):
             names.append("xcrun")
         if do_sign:
@@ -112,8 +112,7 @@ def _check_patch_tools(targets, signing, do_sign):
 def cmd_doctor(args):
     failures = []
     checks = [("Python / LIEF", _check_python_dependencies),
-              ("MachOMerger (файл и права)", toolchain.ensure_merger),
-              ("Mach-O инструменты", lambda: toolchain.require_tools("lipo", "otool"))]
+              ("MachOMerger (file and permissions)", toolchain.ensure_merger)]
     for name, check in checks:
         try:
             result = check()
@@ -121,67 +120,70 @@ def cmd_doctor(args):
         except Exception as exc:
             failures.append(name)
             print(f"FAIL: {name}: {exc}", file=sys.stderr)
-    print("Для сборки исходников дополнительно нужен xcrun/SDK; для подписи — codesign или ldid.")
+    print("Source builds currently require xcrun/SDK; signing requires codesign or ldid.")
     return 1 if failures else 0
 
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="coldhook",
-                                description="Статический merge-патчер Mach-O (ColdHook)")
+                                description="Static Mach-O merge patcher (ColdHook)")
     p.add_argument("--version", action="version", version=f"coldhook {__version__}")
-    p.add_argument("--debug", action="store_true", help="команды и полный traceback")
-    p.add_argument("--log-file", metavar="FILE", help="записать подробный журнал в файл")
+    p.add_argument("--debug", action="store_true",
+                   help="show internal stages, commands, and full traceback")
+    p.add_argument("--log-file", metavar="FILE",
+                   help="write the complete diagnostic log to a file")
     sub = p.add_subparsers(dest="cmd", required=True)
 
-    pd = sub.add_parser("doctor", help="проверить зависимости и поиск мерджера")
+    pd = sub.add_parser("doctor", help="check dependencies and merger discovery")
     pd.set_defaults(func=cmd_doctor)
 
-    pi = sub.add_parser("info", help="показать метаданные Mach-O")
+    pi = sub.add_parser("info", help="show Mach-O metadata")
     pi.add_argument("binary")
     pi.set_defaults(func=cmd_info)
 
-    pm = sub.add_parser("merge", help="смерджить хук в один бинарь")
-    pm.add_argument("--target", required=True, help="целевой Mach-O")
-    pm.add_argument("--src", action="append", metavar="FILE", help="исходник хука (повторяемо)")
-    pm.add_argument("--dylib", metavar="FILE", help="готовый хук-dylib (вместо --src)")
-    pm.add_argument("--out", help="путь результата (по умолч. <target>.coldhook)")
-    pm.add_argument("--name", help="метка для логов")
+    pm = sub.add_parser("merge", help="merge a hook into one binary")
+    pm.add_argument("--target", required=True, help="target Mach-O")
+    pm.add_argument("--src", action="append", metavar="FILE", help="hook source file (repeatable)")
+    pm.add_argument("--dylib", metavar="FILE", help="prebuilt hook dylib (instead of --src)")
+    pm.add_argument("--out", help="output path (default: <target>.coldhook)")
+    pm.add_argument("--name", help="label for logs")
     pm.add_argument("--ldflags", action="append", metavar="FLAG",
-                    help="доп. флаг линковки хука, напр. -lz (повторяемо)")
+                    help="extra hook linker flag, e.g. -lz (repeatable)")
     pm.add_argument("--allow-new-dylibs", action="store_true",
-                    help="разрешить хуку тянуть dylib, которых нет в таргете")
-    pm.add_argument("--no-sign", action="store_true", help="не подписывать результат")
+                    help="allow hook dependencies absent from the target")
+    pm.add_argument("--no-sign", action="store_true", help="skip output signing")
     _add_sign_args(pm)
     pm.set_defaults(func=cmd_merge)
 
-    pp = sub.add_parser("patch", help="пропатчить все таргеты из конфига (отдельные бинари)")
+    pp = sub.add_parser("patch", help="patch all configured targets (individual binaries)")
     pp.add_argument("--config", "-c", required=True, help="coldhook.toml")
-    pp.add_argument("--no-sign", action="store_true", help="не подписывать результаты")
+    pp.add_argument("--no-sign", action="store_true", help="skip output signing")
     pp.set_defaults(func=cmd_patch)
 
-    pb = sub.add_parser("ipa", help="пропатчить .ipa или .app (merge in-place, БЕЗ подписи)")
-    pb.add_argument("input", help="входной .ipa или .app-каталог")
+    pb = sub.add_parser("ipa", help="patch an .ipa or .app (signing disabled by default)")
+    pb.add_argument("input", help="input .ipa or .app directory")
     pb.add_argument("--config", "-c", required=True, help="coldhook.toml")
-    pb.add_argument("--out", "-o", required=True, help="выходной .ipa или .app")
+    pb.add_argument("--out", "-o", required=True, help="output .ipa or .app")
     pb.add_argument("--sign-bundle", action="store_true",
-                    help="подписать бинари в бандле (по умолчанию НЕТ — твоя забота)")
+                    help="sign bundle binaries (disabled by default)")
     pb.set_defaults(func=cmd_ipa)
 
-    ps = sub.add_parser("shared", help="применить один shared hook-dylib ко всем Mach-O в .app/.ipa")
-    ps.add_argument("input", help="входной .app-каталог или .ipa-файл")
-    ps.add_argument("--dylib", required=True, help="общий hook-dylib")
-    ps.add_argument("--runtime", help="libcoldhook.dylib для помещения в Frameworks (по умолчанию рядом с hook)")
-    ps.add_argument("--import-path", help="путь загрузки hook dylib (по умолчанию @executable_path/Frameworks/<name>)")
-    ps.add_argument("--verbose", action="store_true", help="печатать обработанные бинарники")
+    ps = sub.add_parser("shared", help="apply one shared hook dylib to Mach-O images in an .app/.ipa")
+    ps.add_argument("input", help="input .app directory or .ipa file")
+    ps.add_argument("--dylib", required=True, help="shared hook dylib")
+    ps.add_argument("--runtime", help="libcoldhook.dylib to place in Frameworks (default: next to the hook)")
+    ps.add_argument("--import-path", help="hook dylib load path (default: @executable_path/Frameworks/<name>)")
+    ps.add_argument("--verbose", action="store_true",
+                    help="show hook declarations and per-binary results")
     ps.add_argument("--skip-unsupported", action="store_true",
-                    help="пропускать неподдерживаемые служебные Mach-O (например FAT XCTest)")
-    ps.add_argument("--out", "-o", required=True, help="выходной .app-каталог")
+                    help="skip unsupported auxiliary Mach-O images")
+    ps.add_argument("--out", "-o", required=True, help="output .app directory or .ipa file")
     ps.add_argument("--sign-bundle", action="store_true",
-                    help="подписать каждый обработанный Mach-O через ad-hoc codesign")
+                    help="sign each processed Mach-O using ad hoc codesign")
     ps.set_defaults(func=cmd_shared)
 
-    pt = sub.add_parser("install-theos", help="поставить NIC-шаблон «ColdHook Tweak» в $THEOS")
-    pt.add_argument("--theos", help="путь к theos (по умолчанию $THEOS или ~/theos)")
+    pt = sub.add_parser("install-theos", help="install ColdHook Tweak NIC templates into $THEOS")
+    pt.add_argument("--theos", help="Theos path (default: $THEOS or ~/theos)")
     pt.set_defaults(func=_cmd_install_theos)
 
     return p
@@ -195,32 +197,44 @@ def _cmd_install_theos(args) -> int:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     handlers = []
+    log_file_active = False
     try:
-        console = logging.StreamHandler()
-        console.setLevel(logging.DEBUG if args.debug else logging.INFO)
-        handlers.append(console)
+        if args.debug:
+            debug_console = logging.StreamHandler()
+            debug_console.setLevel(logging.DEBUG)
+            debug_console.setFormatter(logging.Formatter(
+                "%(asctime)s %(levelname)s %(message)s"))
+            handlers.append(debug_console)
         if args.log_file:
-            handlers.append(logging.FileHandler(args.log_file, encoding="utf-8"))
+            log_file = logging.FileHandler(args.log_file, encoding="utf-8")
+            log_file.setLevel(logging.DEBUG)
+            log_file.setFormatter(logging.Formatter(
+                "%(asctime)s %(levelname)s %(message)s"))
+            handlers.append(log_file)
+            log_file_active = True
         for handler in handlers:
-            handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
             log.addHandler(handler)
         log.setLevel(logging.DEBUG)
         log.propagate = False
-        with stage(f"Команда {args.cmd}"):
+        with stage(f"Command {args.cmd}"):
             if args.cmd in {"info", "merge", "patch", "ipa", "shared"}:
                 _check_python_dependencies()
             return args.func(args)
     except KeyboardInterrupt:
-        print("Остановлено пользователем (Ctrl+C).", file=sys.stderr)
+        print("Interrupted by user (Ctrl+C).", file=sys.stderr)
         return 130
     except Exception as exc:
-        if handlers and log.handlers:
-            log.error("%s", exc)
-            log.debug("Подробности ошибки", exc_info=True)
-        else:
-            print(f"Не удалось открыть журнал: {exc}", file=sys.stderr)
-        if not args.debug:
-            print("Подробности: добавь --debug или --log-file coldhook.log перед командой.", file=sys.stderr)
+        cause = exc
+        while isinstance(cause, DiagnosticError) and cause.__cause__ is not None:
+            cause = cause.__cause__
+        message = str(cause).splitlines()[0] if str(cause) else type(cause).__name__
+        console.error(message)
+        if handlers:
+            log.debug("Error details", exc_info=True)
+        if log_file_active and not args.debug:
+            print(f"Detailed log: {args.log_file}", file=sys.stderr)
+        elif not args.debug and not args.log_file:
+            print("For details, add --debug or --log-file coldhook.log before the command.", file=sys.stderr)
         return 1
     finally:
         for handler in handlers:

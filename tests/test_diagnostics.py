@@ -33,13 +33,14 @@ class DiagnosticsTests(unittest.TestCase):
              patch("os.access", return_value=True):
             self.assertEqual(toolchain.ensure_merger(), "/tools/MachOMerger")
 
-    def test_failed_metadata_preserves_command_and_stderr(self):
-        proc = subprocess.CompletedProcess([], 7, "", "broken Mach-O header")
-        with patch("subprocess.run", return_value=proc):
+    def test_failed_metadata_preserves_path_and_reason(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            binary = Path(tmp, "test binary")
+            binary.write_bytes(b"invalid header")
             with self.assertRaises(DiagnosticError) as caught:
-                macho.inspect("/tmp/test binary")
-        for value in ("Анализ Mach-O", "broken Mach-O header", "7", "lipo", "/tmp/test binary"):
-            self.assertIn(value, str(caught.exception))
+                macho.inspect(str(binary))
+            for value in ("Inspecting Mach-O", "Invalid or truncated Mach-O header", str(binary)):
+                self.assertIn(value, str(caught.exception))
 
     def test_config_rejects_string_sources(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -57,7 +58,25 @@ class DiagnosticsTests(unittest.TestCase):
             self.assertEqual(result, 1)
             self.assertIn("pip install", stderr.getvalue())
             self.assertNotIn("Traceback", stderr.getvalue())
+            self.assertIn(f"Detailed log: {log_path}", stderr.getvalue())
             self.assertIn("Traceback", log_path.read_text())
+
+    def test_normal_cli_error_has_no_internal_log_prefix(self):
+        with patch("importlib.import_module", side_effect=ImportError("missing lief")), \
+             contextlib.redirect_stderr(io.StringIO()) as stderr:
+            result = cli.main(["info", "dummy"])
+        output = stderr.getvalue()
+        self.assertEqual(result, 1)
+        self.assertIn("error:", output)
+        self.assertNotIn(" INFO ", output)
+        self.assertNotIn(" DEBUG ", output)
+        self.assertNotIn("Traceback", output)
+
+    def test_stage_events_are_debug_diagnostics(self):
+        with self.assertLogs("coldhook", level="DEBUG") as caught:
+            with cli.stage("Тестовый этап"):
+                pass
+        self.assertTrue(all(record.levelname == "DEBUG" for record in caught.records))
 
     def test_help_works_without_dependency_check(self):
         with patch("importlib.import_module", side_effect=ImportError), \
