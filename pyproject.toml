@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "coldhook"
-version = "0.1.0"
+version = "0.1.1"
 description = "ColdHook static Mach-O hook tooling"
 requires-python = ">=3.11"
 dependencies = ["lief>=0.17"]
@@ -25,6 +25,9 @@ coldhook = [
   "runtime/*",
   "substrate/**/*",
 ]
+
+[tool.setuptools.exclude-package-data]
+coldhook = ["**/*.pyc", "**/*.pyo", "**/.DS_Store"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
