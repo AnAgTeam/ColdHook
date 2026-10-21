@@ -15,13 +15,13 @@ class DiagnosticError(RuntimeError):
 @contextmanager
 def stage(name):
     start = time.monotonic()
-    log.info("Начало: %s", name)
+    log.debug("Starting: %s", name)
     try:
         yield
     except Exception as exc:
         raise DiagnosticError(f"{name}: {type(exc).__name__}: {exc}") from exc
     else:
-        log.info("Готово: %s (%.2f с)", name, time.monotonic() - start)
+        log.debug("Finished: %s (%.2f s)", name, time.monotonic() - start)
 
 
 def traced(name, *fields):

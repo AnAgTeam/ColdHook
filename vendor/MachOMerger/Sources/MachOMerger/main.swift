@@ -32,8 +32,14 @@ func coldhookFlagValue(_ name: String) -> String? {
 }
 let coldhookModeArg = (coldhookFlagValue("--mode") ?? "auto").lowercased()
 let coldhookImportPath = coldhookFlagValue("--import-path")
+let coldhookReportPath = coldhookFlagValue("--report-json")
+let coldhookTargetPath = coldhookFlagValue("--target-path")
 guard ["auto", "append", "interleave", "shared"].contains(coldhookModeArg) else {
     print("Unknown --mode '\(coldhookModeArg)'. Use: auto | append | interleave | shared")
+    exit(-1)
+}
+if coldhookReportPath != nil && coldhookModeArg != "shared" {
+    print("--report-json is only supported with --mode shared")
     exit(-1)
 }
 
@@ -41,12 +47,13 @@ var coldhookPosArgs: [String] = []
 var coldhookSkipNext = false
 for arg in CommandLine.arguments.dropFirst() {
     if coldhookSkipNext { coldhookSkipNext = false; continue }   // значение --mode <val>
-    if arg == "--mode" || arg == "--import-path" { coldhookSkipNext = true; continue }
+    if arg == "--mode" || arg == "--import-path" || arg == "--report-json"
+        || arg == "--target-path" { coldhookSkipNext = true; continue }
     if arg.hasPrefix("--") { continue }                         // прочие флаги (--allow-new-dylibs)
     coldhookPosArgs.append(arg)
 }
 guard coldhookPosArgs.count == 3 else {
-    print("Usage: MachOMerger <a> <b> <out> [--allow-new-dylibs] [--mode auto|append|interleave|shared] [--import-path PATH]")
+    print("Usage: MachOMerger <a> <b> <out> [--allow-new-dylibs] [--mode auto|append|interleave|shared] [--import-path PATH] [--report-json PATH]")
     exit(-1)
 }
 
@@ -231,6 +238,31 @@ let coldhookBase: UInt64 = coldhookHasPageZero
     : 0
 
 if coldhookModeArg == "shared" {
+    func writeSharedReport(status: String, hooks: [ColdhookSharedHookPlan]) throws {
+        guard let path = coldhookReportPath else { return }
+        let rows: [[String: Any]] = hooks.map { hook in
+            let declaration = hook.spec.handlerName
+            let handler = declaration.components(separatedBy: "__CH__").last ?? declaration
+            return [
+                "kind": hook.spec.kind == .symbol ? "symbol" : "address",
+                "selector": hook.spec.binarySelector ?? "",
+                "locator": hook.spec.locator,
+                "handler": handler,
+                "declaration": declaration,
+                "target_address": String(format: "0x%llx", hook.entryAddress),
+            ]
+        }
+        let report: [String: Any] = [
+            "version": 1,
+            "status": status,
+            "target": coldhookTargetPath ?? coldhookPosArgs[0],
+            "hooks": rows,
+        ]
+        let data = try JSONSerialization.data(withJSONObject: report,
+                                              options: [.prettyPrinted, .sortedKeys])
+        try data.write(to: URL(fileURLWithPath: path), options: .atomic)
+    }
+
     func sharedDylibCommand(from image: MachO) -> Data? {
         var pos = 0x20
         let count = image.data.getGeneric(type: UInt32.self, offset: 0x10)
@@ -267,9 +299,11 @@ if coldhookModeArg == "shared" {
             targetResolver: makeColdhookSymbolResolver(dataA.symtab),
             userHooksData: dataB,
             userHooksResolver: makeColdhookSymbolResolver(dataB.symtab),
-            targetSelectors: coldhookBinarySelectors(path: coldhookPosArgs[0]))
+            targetSelectors: coldhookBinarySelectors(
+                path: coldhookTargetPath ?? coldhookPosArgs[0]))
         if assembly.plan.hooks.isEmpty {
             try writeMachO(a.data, to: coldhookPosArgs[2])
+            try writeSharedReport(status: "no-applicable-hooks", hooks: [])
             print("Done! (shared-режим: no applicable hooks)")
             exit(0)
         }
@@ -449,10 +483,14 @@ if coldhookModeArg == "shared" {
         // __TEXT's segment bytes include the old header; install the new header last.
         output.replaceSubrange(0..<limit, with: headerData + Data(repeating: 0, count: limit - headerData.count))
         try writeMachO(output, to: coldhookPosArgs[2])
+        try writeSharedReport(status: "patched", hooks: assembly.plan.hooks)
         print("Done! (shared-режим: \(assembly.plan.hooks.count) hook(s))")
     } catch ColdhookSharedAssemblerError.noApplicableHooks {
-        try? writeMachO(a.data, to: coldhookPosArgs[2])
-        print("Done! (shared-режим: no applicable hooks)")
+        do {
+            try writeMachO(a.data, to: coldhookPosArgs[2])
+            try writeSharedReport(status: "no-applicable-hooks", hooks: [])
+            print("Done! (shared-режим: no applicable hooks)")
+        } catch { print("shared report: \(error)"); exit(-1) }
     } catch { print("shared: \(error)"); exit(-1) }
     exit(0)
 }

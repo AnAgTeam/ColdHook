@@ -1,4 +1,4 @@
-"""Патч бандла: .ipa (iOS) или .app-каталога (macOS) — merge хука в бинари in-place.
+"""Patching bundle: .ipa (iOS) или .app-каталога (macOS) — merge хука в бинари in-place.
 
 Структура патча одинакова для обеих платформ: распаковать -> найти .app -> по каждому
 таргету (путь относительно .app) merge in-place -> запаковать. Подпись по умолчанию НЕ
@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import glob
+import json
 import os
 from .diagnostics import traced
 import pathlib
@@ -15,8 +16,8 @@ import subprocess
 import tempfile
 import zipfile
 
-from . import build
-from .build import C_CYAN, C_GREEN, C_RST, PatchError
+from . import build, console
+from .build import PatchError
 from .config import Config
 
 try:
@@ -106,25 +107,59 @@ def _validate_shared_selectors(app: str, dylib: str) -> None:
                 matches.append(rel)
         if len(matches) > 1:
             raise PatchError(
-                "shared: неоднозначный binary selector "
-                f"{selector!r}; совпали: {', '.join(matches)}. "
-                "Укажи bundle-relative или абсолютный путь в макросе.")
+                "shared: ambiguous binary selector "
+                f"{selector!r}; matches: {', '.join(matches)}. "
+                "Specify a bundle-relative or absolute path in the macro.")
 
 
-@traced('Shared-патч бинарника', 'target')
-def _merge_shared(target: str, dylib: str, out: str, import_path: str | None) -> None:
+def _merge_shared_thin(target: str, dylib: str, out: str,
+                       import_path: str | None,
+                       target_path: str | None = None) -> dict[str, object]:
+    report_path = out + ".report.json"
+    if os.path.exists(report_path):
+        os.remove(report_path)
+    try:
+        build.toolchain.merge(target, dylib, out, mode="shared",
+                              import_path=import_path, report_json=report_path,
+                              target_path=target_path)
+        try:
+            with open(report_path, encoding="utf-8") as report_file:
+                report = json.load(report_file)
+        except (OSError, json.JSONDecodeError) as exc:
+            raise PatchError(f"MachOMerger did not produce a valid JSON report: {exc}") from exc
+    finally:
+        if os.path.exists(report_path):
+            os.remove(report_path)
+    if (not isinstance(report, dict) or report.get("version") != 1
+            or report.get("status") not in {"patched", "no-applicable-hooks"}
+            or not isinstance(report.get("hooks"), list)):
+        raise PatchError("MachOMerger returned an unsupported JSON report")
+    hooks = report["hooks"]
+    if ((report["status"] == "patched") != bool(hooks)
+            or any(not isinstance(hook, dict)
+                   or not all(isinstance(hook.get(field), str)
+                              for field in ("kind", "selector", "locator", "handler"))
+                   for hook in hooks)):
+        raise PatchError("MachOMerger returned an invalid hook JSON report")
+    return report
+
+
+@traced('Patching shared binary', 'target')
+def _merge_shared(target: str, dylib: str, out: str,
+                  import_path: str | None) -> dict[str, object]:
     """Merge a shared hook into a thin image or every compatible FAT slice."""
     info = build.macho.inspect(target)
     if not info.is_fat:
-        build.toolchain.merge(target, dylib, out, mode="shared", import_path=import_path)
-        return
+        return _merge_shared_thin(target, dylib, out, import_path)
     hook_info = build.macho.inspect(dylib)
     patchable = [a for a in info.archs
                  if a in build.macho.MERGER_ARCHS and a in hook_info.archs]
     if not patchable:
-        raise PatchError(f"shared FAT {info.archs}: нет общего поддерживаемого слайса с hook {hook_info.archs}")
+        raise PatchError(f"shared FAT {info.archs}: no supported slice in common with hook {hook_info.archs}")
     with tempfile.TemporaryDirectory(prefix="coldhook_shared_fat_") as tmp:
         replacements: dict[str, str] = {}
+        hooks: list[dict[str, object]] = []
+        seen_hooks: set[tuple[object, ...]] = set()
         for arch in patchable:
             thin_target = os.path.join(tmp, f"target_{arch}")
             thin_hook = dylib if not hook_info.is_fat else os.path.join(tmp, f"hook_{arch}")
@@ -132,25 +167,38 @@ def _merge_shared(target: str, dylib: str, out: str, import_path: str | None) ->
             if hook_info.is_fat:
                 build.macho.thin(dylib, arch, thin_hook)
             patched = os.path.join(tmp, f"patched_{arch}")
-            build.toolchain.merge(thin_target, thin_hook, patched, mode="shared", import_path=import_path)
+            report = _merge_shared_thin(thin_target, thin_hook, patched,
+                                        import_path, target_path=target)
+            for hook in report["hooks"]:
+                if not isinstance(hook, dict):
+                    raise PatchError("MachOMerger returned an invalid hook record")
+                key = tuple(hook.get(field) for field in
+                            ("kind", "selector", "locator", "handler"))
+                if key not in seen_hooks:
+                    seen_hooks.add(key)
+                    hooks.append(hook)
             replacements[arch] = patched
         build.macho.replace_slices(target, replacements, out)
+        return {"version": 1,
+                "status": "patched" if hooks else "no-applicable-hooks",
+                "target": target,
+                "hooks": hooks}
 
 
 def _run(cmd: list[str], what: str, cwd: str | None = None) -> None:
     build.toolchain._run(cmd, what, cwd=cwd)
 
 
-@traced('Распаковка IPA', 'path')
+@traced('Unpacking IPA', 'path')
 def _unpack_ipa(path: str, destination: str) -> None:
     try:
         with zipfile.ZipFile(path) as archive:
             archive.extractall(destination)
     except (OSError, zipfile.BadZipFile) as exc:
-        raise PatchError(f"unzip упало: {exc}") from exc
+        raise PatchError(f"Unpacking failed: {exc}") from exc
 
 
-@traced('Упаковка IPA', 'output')
+@traced('Packing IPA', 'output')
 def _pack_ipa(stage: str, output: str) -> None:
     try:
         with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as archive:
@@ -160,10 +208,10 @@ def _pack_ipa(stage: str, output: str) -> None:
                     path = os.path.join(root, name)
                     archive.write(path, os.path.relpath(path, stage))
     except OSError as exc:
-        raise PatchError(f"zip упало: {exc}") from exc
+        raise PatchError(f"Packing failed: {exc}") from exc
 
 
-@traced('Поиск приложения', 'root')
+@traced('Finding application', 'root')
 def _find_app(root: str) -> str:
     """Найти .app: для IPA — Payload/*.app; если root сам .app — он и есть."""
     if root.endswith(".app") and os.path.isdir(root):
@@ -172,29 +220,29 @@ def _find_app(root: str) -> str:
     if not cands:
         cands = glob.glob(os.path.join(root, "*.app"))
     if not cands:
-        raise PatchError(f"не найден .app внутри {root}")
+        raise PatchError(f"No .app found inside {root}")
     return cands[0]
 
 
-@traced('Патч бандла', 'inp', 'out')
+@traced('Patching bundle', 'inp', 'out')
 def patch_bundle(inp: str, config: Config, out: str, do_sign: bool = False) -> str:
     build.toolchain.ensure_merger()
     is_ipa = inp.lower().endswith(".ipa") or os.path.isfile(inp)
     work = tempfile.mkdtemp(prefix="coldhook_bundle_")
     try:
         if is_ipa:
-            print(f"{C_CYAN}== распаковка IPA: {os.path.basename(inp)}{C_RST}")
+            console.stage(f"Unpacking IPA: {os.path.basename(inp)}")
             _unpack_ipa(inp, work)
             stage = work
         else:
             # .app-каталог: работаем на копии, чтобы не трогать оригинал
-            print(f"{C_CYAN}== копия .app: {os.path.basename(inp)}{C_RST}")
+            console.stage(f"Copying .app: {os.path.basename(inp)}")
             dst = os.path.join(work, os.path.basename(inp))
             shutil.copytree(inp, dst, symlinks=True)
             stage = dst
 
         app = _find_app(stage)
-        print(f"{C_CYAN}== .app: {os.path.relpath(app, work)}{C_RST}")
+        console.stage(f"Application: {os.path.relpath(app, work)}")
 
         for t in config.targets:
             binary = os.path.join(app, t.binary)
@@ -203,25 +251,25 @@ def patch_bundle(inp: str, config: Config, out: str, do_sign: bool = False) -> s
 
         # запаковка
         if is_ipa:
-            print(f"{C_CYAN}== запаковка -> {os.path.basename(out)}{C_RST}")
+            console.stage(f"Packing IPA: {os.path.basename(out)}")
             out_abs = os.path.abspath(out)
             if os.path.exists(out_abs):
                 os.remove(out_abs)
             # zip из каталога staging, сохраняя Payload/ и права/симлинки
             _pack_ipa(stage, out_abs)
         else:
-            print(f"{C_CYAN}== вывод .app -> {out}{C_RST}")
+            console.stage(f"Saving .app: {out}")
             if os.path.exists(out):
                 shutil.rmtree(out)
             shutil.copytree(app, out, symlinks=True)
     finally:
         shutil.rmtree(work, ignore_errors=True)
 
-    print(f"{C_GREEN}OK бандл пропатчен -> {out}{C_RST}")
+    console.success(f"Bundle patched -> {out}")
     return out
 
 
-@traced('Shared-патч бандла', 'inp', 'out')
+@traced('Patching shared bundle', 'inp', 'out')
 def patch_shared_bundle(inp: str, dylib: str, out: str, do_sign: bool = False,
                         import_path: str | None = None, runtime: str | None = None,
                         verbose: bool = False, skip_unsupported: bool = False) -> str:
@@ -232,31 +280,32 @@ def patch_shared_bundle(inp: str, dylib: str, out: str, do_sign: bool = False,
     """
     build.toolchain.ensure_merger()
     if not os.path.exists(dylib):
-        raise PatchError(f"shared hook-dylib не найден: {dylib}")
+        raise PatchError(f"Shared hook dylib not found: {dylib}")
     if runtime is None:
         candidate = os.path.join(os.path.dirname(os.path.abspath(dylib)), "libcoldhook.dylib")
         if os.path.exists(candidate):
             runtime = candidate
     if not runtime or not os.path.exists(runtime):
-        raise PatchError("shared runtime не найден; укажи --runtime /path/to/libcoldhook.dylib")
+        raise PatchError("Shared runtime not found; specify --runtime <path-to-libcoldhook.dylib>")
     work = tempfile.mkdtemp(prefix="coldhook_shared_bundle_")
     is_ipa = inp.lower().endswith(".ipa") or os.path.isfile(inp)
     try:
         if is_ipa:
-            print(f"{C_CYAN}== распаковка IPA: {os.path.basename(inp)}{C_RST}")
+            console.stage(f"Unpacking IPA: {os.path.basename(inp)}")
             _unpack_ipa(inp, work)
             stage = work
         else:
             if not inp.endswith(".app") or not os.path.isdir(inp):
-                raise PatchError("shared: ожидается каталог .app или файл .ipa")
+                raise PatchError("shared: expected an .app directory or .ipa file")
             stage = os.path.join(work, os.path.basename(inp))
             shutil.copytree(inp, stage, symlinks=True)
         app = _find_app(stage)
         _validate_shared_selectors(app, dylib)
         hook_descriptions = _shared_hook_descriptions(dylib) if verbose else []
         if verbose:
+            console.stage(f"Declared hooks: {len(hook_descriptions)}")
             for description in hook_descriptions:
-                print(f"will add {description}")
+                console.detail(description)
         # Shared sideload bundles carry the hook runtime with the app.  The
         # merger rewrites LC_LOAD_DYLIB to @executable_path/Frameworks/<name>.
         bundled_dylib = None
@@ -269,7 +318,7 @@ def patch_shared_bundle(inp: str, dylib: str, out: str, do_sign: bool = False,
         os.makedirs(os.path.dirname(runtime_dest), exist_ok=True)
         shutil.copy2(runtime, runtime_dest)
         dylib_real = os.path.realpath(dylib)
-        patched = 0
+        targets: list[str] = []
         seen_targets: set[str] = set()
         for root, _, files in os.walk(stage):
             for name in files:
@@ -283,7 +332,7 @@ def patch_shared_bundle(inp: str, dylib: str, out: str, do_sign: bool = False,
                     or framework_name.startswith(("XCTest", "XC", "XCT", "Testing"))
                     or "XCUnit.framework" in target
                 )
-                if (".xctest" in target or ".dSYM" in target or "/PlugIns/" in target
+                if (".xctest" in target or ".dSYM" in target or "PlugIns" in path_parts
                         or is_xctest_support):
                     continue
                 target_real = os.path.realpath(target)
@@ -296,31 +345,59 @@ def patch_shared_bundle(inp: str, dylib: str, out: str, do_sign: bool = False,
                     continue
                 if not build.macho.is_macho(target):
                     continue
-                merged = target + ".coldhook"
-                before = open(target, "rb").read() if verbose else None
-                try:
-                    _merge_shared(target, dylib, merged, import_path)
-                except Exception as exc:
-                    if os.path.exists(merged):
-                        os.remove(merged)
-                    if skip_unsupported and any(marker in str(exc) for marker in
-                                                ("FatNotMachO", "Unsupported", "not a Mach-O",
-                                                 "Unhandled command Unknown")):
-                        if verbose:
-                            print(f"skip unsupported {os.path.relpath(target, app)}: {exc}")
-                        continue
-                    raise
-                shutil.copymode(target, merged)
-                shutil.move(merged, target)
-                if do_sign:
-                    build.toolchain.sign(target)
+                targets.append(target)
+
+        console.stage(f"Processing Mach-O: found {len(targets)}")
+        processed = 0
+        patched = 0
+        unchanged = 0
+        skipped = 0
+        applied_hooks = 0
+        for index, target in enumerate(targets, 1):
+            rel = os.path.relpath(target, app)
+            console.progress(index, len(targets), rel)
+            merged = target + ".coldhook"
+            try:
+                report = _merge_shared(target, dylib, merged, import_path)
+            except Exception as exc:
+                if os.path.exists(merged):
+                    os.remove(merged)
+                if skip_unsupported and any(marker in str(exc) for marker in
+                                            ("FatNotMachO", "Unsupported", "not a Mach-O",
+                                             "Unhandled command Unknown")):
+                    skipped += 1
+                    if verbose:
+                        console.detail(f"skipped as unsupported: {exc}")
+                    continue
+                raise
+            hooks = report["hooks"]
+            if not isinstance(hooks, list):
+                raise PatchError("MachOMerger returned an invalid hook list")
+            changed = report["status"] == "patched"
+            shutil.copymode(target, merged)
+            shutil.move(merged, target)
+            if do_sign:
+                build.toolchain.sign(target)
+            processed += 1
+            if changed:
                 patched += 1
-                if verbose:
-                    after = open(target, "rb").read()
-                    rel = os.path.relpath(target, app)
-                    print(f"no-op binary {rel}" if before == after else f"added hooks to {rel}")
+                applied_hooks += len(hooks)
+                console.applied(f"Hooks applied: {len(hooks)}")
+            else:
+                unchanged += 1
+                console.not_applied("No applicable hooks")
+            if verbose:
+                for hook in hooks:
+                    if not isinstance(hook, dict):
+                        raise PatchError("MachOMerger returned an invalid hook record")
+                    kind = str(hook.get("kind", "?")).upper()
+                    locator = str(hook.get("locator", "?"))
+                    if kind == "ADDRESS" and locator.startswith("COLDHOOK_ADDR_"):
+                        locator = locator[len("COLDHOOK_ADDR_"):]
+                    handler = str(hook.get("handler", "?"))
+                    console.detail(f"{kind:<7} {locator} → {handler}")
         if is_ipa:
-            print(f"{C_CYAN}== запаковка IPA: {os.path.basename(out)}{C_RST}")
+            console.stage(f"Packing IPA: {os.path.basename(out)}")
             out_abs = os.path.abspath(out)
             if os.path.exists(out_abs):
                 os.remove(out_abs)
@@ -331,5 +408,11 @@ def patch_shared_bundle(inp: str, dylib: str, out: str, do_sign: bool = False,
             shutil.copytree(stage, out, symlinks=True)
     finally:
         shutil.rmtree(work, ignore_errors=True)
-    print(f"{C_GREEN}OK shared bundle: обработано Mach-O: {patched}{C_RST}")
+    summary = (f"Done: found {len(targets)}, processed {processed}, "
+               f"patched {patched}, hooks {applied_hooks}, "
+               f"unchanged {unchanged}")
+    if skipped:
+        summary += f", skipped {skipped}"
+    console.success(summary)
+    console.detail(f"Output: {out}")
     return out

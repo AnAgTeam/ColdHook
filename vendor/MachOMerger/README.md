@@ -14,3 +14,11 @@ other slices are copied into the output unchanged.
 
 The tool only rewrites Mach-O bytes. Signing, loading, and execution remain
 macOS-only operations and are intentionally not performed by the merger.
+
+## Shared-mode report
+
+Pass `--report-json <path>` with `--mode shared` to atomically write a
+machine-readable report containing the final hooks that passed selector
+matching and target resolution. Each hook includes its kind, selector, locator,
+handler, declaration, and resolved target address. A successful no-op uses the
+`no-applicable-hooks` status and an empty `hooks` array.

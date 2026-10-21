@@ -75,9 +75,9 @@ This installs only the ColdHook NIC templates into an existing `$THEOS`; it does
 
 ### Windows
 
-`coldhook shared` is supported on Windows for already-built **thin Mach-O** files. You need the ColdHook Python package (with cross-platform `lief`), `MachOMerger.exe`, a built `userhooks.dylib`, and `libcoldhook.dylib`. `coldhook shared` does not require `coldhook.toml`: selectors are read from the hook dylib export trie, and `.app`/`.ipa` bundles are unpacked and repacked with Python's built-in `zipfile`.
+`coldhook shared` can process already-built thin and FAT Mach-O files without Apple command-line tools on Windows. You need the ColdHook Python package (with cross-platform `lief`), `MachOMerger.exe`, a built `userhooks.dylib`, and `libcoldhook.dylib`. `coldhook shared` does not require `coldhook.toml`: selectors are read from the hook dylib export trie, and `.app`/`.ipa` bundles are unpacked and repacked with Python's built-in `zipfile`.
 
-Windows limitations: shared mode does not perform FAT slicing automatically; configuration-based `patch`/`ipa` and FAT handling require Apple's `lipo`/`otool`, while building hook code remains a macOS/Theos/Xcode task. Re-sign the bundle on Windows with the sideload tool appropriate for your workflow.
+Mach-O inspection, slice extraction, and FAT reconstruction use portable Python code; `info`, `merge`, `patch`, `ipa`, and `shared` do not require `lipo` or `otool`. For `merge`/`patch` on Windows, use prebuilt hook dylibs and `--no-sign`; bundle signing is disabled by default. Shared mode patches compatible arm64/arm64e slices and preserves other slices byte-for-byte. Source compilation still uses Apple's `xcrun`/SDK, and `--sign-bundle` still uses `codesign`; these workflows need further Windows compatibility work. Re-sign bundles with the appropriate Windows sideload tool. Windows execution must be validated separately; portable tests do not establish full platform parity.
 
 ## Usage
 
@@ -108,7 +108,9 @@ python3 -m coldhook shared input.ipa \
   --verbose
 ```
 
-Use `--skip-unsupported` for test bundles containing unsupported auxiliary Mach-O files. `shared` expects thin Mach-O files and does not perform FAT slicing automatically.
+Use `--skip-unsupported` for test bundles containing unsupported auxiliary Mach-O files. `shared` handles thin and FAT Mach-O files, preserving slices it does not patch.
+Normal output shows bundle stages, per-Mach-O progress, and final counts. Add
+`--verbose` to list hook declarations and the result for each binary.
 
 IPA signing is disabled by default. With `--sign-bundle`, processed target binaries are signed; added shared hook/runtime dylibs must be signed separately before signing the app using the method required by your sideload tool.
 
@@ -232,9 +234,11 @@ Compilation additionally needs `xcrun` and a suitable SDK; signing needs
 `codesign` or `ldid`. Apple tools are still required for Mach-O inspection.
 
 Use `python3 -m coldhook --log-file coldhook.log patch -c coldhook.toml`
-for a detailed appended diagnostic log, or `--debug` for console tracebacks.
-Both flags go before the subcommand. Errors include stages, paths, and failed
-command output. Processing commands check LIEF before work begins.
+for a detailed appended diagnostic log, or `--debug` for internal stages,
+commands, and console tracebacks. Both flags go before the subcommand. Normal
+console output omits timestamps and log levels; diagnostic files retain them.
+Set `NO_COLOR=1` to disable color. Processing commands check LIEF before work
+begins.
 
 Merger search order: explicit `COLDHOOK_MERGER` path (supports `~`), current
 working directory, `PATH`, bundled `bin/`, package directory, then the legacy
