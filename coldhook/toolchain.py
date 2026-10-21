@@ -8,10 +8,7 @@ import shlex
 
 from .diagnostics import log, traced
 
-# Корень репозитория = на два уровня выше этого файла (coldhook/ -> repo).
-ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 _merger_name = "MachOMerger.exe" if os.name == "nt" else "MachOMerger"
-MERGER = os.path.join(ROOT, "vendor", "MachOMerger", ".build", "release", _merger_name)
 
 # Флаги, обязательные для сливаемых бинарей (см. харнесс/память):
 #  -fixup_chains       — мёрджер умеет только LC_DYLD_CHAINED_FIXUPS;
@@ -46,6 +43,7 @@ def _run(cmd: list[str], what: str, cwd: str | None = None) -> subprocess.Comple
 
 
 def ensure_merger() -> str:
+    """Resolve an explicit environment path, then the current directory and PATH."""
     configured = os.environ.get("COLDHOOK_MERGER")
     if configured:
         candidates = [os.path.abspath(os.path.expanduser(configured))]
@@ -53,9 +51,7 @@ def ensure_merger() -> str:
         candidates = [os.path.join(os.getcwd(), _merger_name)]
         on_path = shutil.which(_merger_name)
         if on_path:
-            candidates.append(on_path)
-        candidates += [os.path.join(ROOT, "bin", _merger_name),
-                       os.path.join(os.path.dirname(__file__), _merger_name), MERGER]
+            candidates.append(os.path.abspath(on_path))
     for candidate in dict.fromkeys(candidates):
         if os.path.isfile(candidate) and (os.name == "nt" or os.access(candidate, os.X_OK)):
             log.debug("MachOMerger: %s", candidate)

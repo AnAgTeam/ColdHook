@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Shared-mode Logos %hook: tweak stays a separate dylib, so selrefs remain valid."""
+from coldhook.toolchain import ensure_merger
 import os, subprocess, sys
 from pathlib import Path
 
@@ -7,7 +8,7 @@ HERE = Path(__file__).resolve().parent; ROOT = HERE.parents[1]
 BUILD = HERE / "build" / "objchook_shared"
 PRE = ROOT / "coldhook/logos_prepass.py"; INC = ROOT / "coldhook/include"
 SUB = ROOT / "coldhook/substrate"; THEOS = Path(os.environ.get("THEOS", Path.home()/"theos"))
-LOGOS = THEOS / "bin/logos.pl"; MERGER = os.environ.get("COLDHOOK_MERGER") or ROOT / "vendor/MachOMerger/.build/release/MachOMerger"
+LOGOS = THEOS / "bin/logos.pl"; MERGER = ensure_merger()
 
 def run(cmd, **kw): return subprocess.run([str(x) for x in cmd], **kw)
 

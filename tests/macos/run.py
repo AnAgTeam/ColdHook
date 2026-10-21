@@ -9,8 +9,10 @@ import subprocess
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+from coldhook.toolchain import ensure_merger
+
 ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))
-MERGER = os.environ.get("COLDHOOK_MERGER") or os.path.join(ROOT, "vendor", "MachOMerger", ".build", "release", "MachOMerger")
+MERGER = ensure_merger()
 BUILD = os.path.join(HERE, "build", "default")
 ARCH = "arm64"
 # Требования MachOMerger к сливаемым бинарям:

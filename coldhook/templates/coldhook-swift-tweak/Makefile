@@ -5,13 +5,11 @@ include $(THEOS)/makefiles/common.mk
 
 TWEAK_NAME = @@PROJECTNAME@@
 
-# Путь к репозиторию ColdHook (подставлен `coldhook install-theos`).
-COLDHOOK = @@COLDHOOK@@
 
 # Swift-хук: theos компилит Hook.swift + glue.c в один dylib. Ни пре-пасса, ни substrate-шима
 # (чистый Swift, без ObjC-свизла) — в отличие от Logos-шаблона.
 @@PROJECTNAME@@_FILES = Hook.swift glue.c
-@@PROJECTNAME@@_CFLAGS = -I$(COLDHOOK)/coldhook/include
+@@PROJECTNAME@@_CFLAGS = -Iinclude
 # -fixup_chains + -add_split_seg_info: обязательны, чтобы dylib мёрджился ColdHook.
 @@PROJECTNAME@@_LDFLAGS = -Wl,-no_warn_inits -Wl,-fixup_chains -Xlinker -add_split_seg_info
 

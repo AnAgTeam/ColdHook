@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """End-to-end regression for shared @ColdHookOffset with a Swift-ABI ORIG call."""
+from coldhook.toolchain import ensure_merger
 import os, re, subprocess, sys, tempfile
 from pathlib import Path
 
@@ -49,8 +50,7 @@ public func replacement(_ x: Int) -> String {{
         glue_obj = root / "glue.o"
         merged = root / "merged"
         include = ROOT / "coldhook/include"
-        merger = Path(os.environ.get("COLDHOOK_MERGER") or
-                      ROOT / "vendor/MachOMerger/.build/release/MachOMerger")
+        merger = Path(ensure_merger())
         subprocess.run(["xcrun", "clang", "-arch", "arm64", "-target", "arm64-apple-macos13", "-dynamiclib",
                         "-I", str(include), "-install_name", "@loader_path/libcoldhook.dylib",
                         str(ROOT / "coldhook/shared_runtime.c"), "-o", str(runtime)], check=True, env=env)

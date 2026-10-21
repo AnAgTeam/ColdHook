@@ -39,9 +39,6 @@ def run(cmd: list[str]) -> None:
     subprocess.run(cmd, check=True)
 
 
-MERGER = REPO / "vendor/MachOMerger/.build/release/MachOMerger"
-
-
 def patch_and_resign(app: str, binary_name: str, hook: str, identity: str) -> None:
     """Merge a hook dylib into the app's main binary (append-mode) and re-sign the bundle.
 
@@ -49,9 +46,10 @@ def patch_and_resign(app: str, binary_name: str, hook: str, identity: str) -> No
     patched binary in, and re-sign with `identity` so the device accepts the modified bundle.
     """
     import shutil
+    from coldhook.toolchain import ensure_merger
     binary = os.path.join(app, binary_name)
     merged = binary + ".coldhook"
-    run([str(MERGER), binary, hook, merged])
+    run([ensure_merger(), binary, hook, merged])
     shutil.move(merged, binary)
     os.chmod(binary, 0o755)
     # Preserve the original entitlements (provisioning needs them on device).

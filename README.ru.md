@@ -58,7 +58,7 @@ native Swift-функции уже собранного IPA.
 - Python-пакет/скрипт `coldhook`;
 - runtime `libcoldhook.dylib` для shared-режима.
 
-Положи `MachOMerger` в `vendor/MachOMerger/.build/release/` либо укажи путь через переменные окружения проекта. После этого можно сразу запускать команды ниже — локальная сборка Swift не требуется.
+Положи `MachOMerger` (`MachOMerger.exe` на Windows) в текущую рабочую папку или `PATH`, либо задай путь в `COLDHOOK_MERGER`. После этого можно сразу запускать команды ниже — локальная сборка Swift не требуется.
 
 ### Вариант 2: сборка из исходников
 
@@ -310,7 +310,9 @@ Ctrl+C — 130. Для отключения цвета используется 
    команда завершается ошибкой, другой бинарник не подставляется.
 2. `MachOMerger` (`MachOMerger.exe` на Windows) в текущем рабочем каталоге.
 3. Бинарник в `PATH`.
-4. Комплектный `bin/`, каталог Python-пакета, затем сборка в `vendor/`.
+
+Каталоги сборки и Python-пакета не проверяются. После сборки задай путь
+через `COLDHOOK_MERGER` или добавь каталог бинарника в `PATH`.
 
 ```sh
 COLDHOOK_MERGER=/opt/coldhook/MachOMerger python3 -m coldhook doctor

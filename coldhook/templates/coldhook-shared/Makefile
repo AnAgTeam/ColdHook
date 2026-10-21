@@ -4,7 +4,6 @@ TARGET = iphone:clang:latest:15.0
 include $(THEOS)/makefiles/common.mk
 
 TWEAK_NAME = @@PROJECTNAME@@
-COLDHOOK = @@COLDHOOK@@
 # Path to the runtime linker stub. The real dylib is only needed at launch.
 COLDHOOK_RUNTIME_DIR ?= $(THEOS_PROJECT_DIR)
 
@@ -18,7 +17,7 @@ endif
 @@PROJECTNAME@@_CFLAGS = -fobjc-arc -Iinclude -Iinclude/CydiaSubstrate
 @@PROJECTNAME@@_LDFLAGS = -Wl,-no_warn_inits -Wl,-fixup_chains -Xlinker -add_split_seg_info \
     -Wl,-not_for_dyld_shared_cache \
-    -L$(COLDHOOK_RUNTIME_DIR) -lcoldhook -Wl,-rpath,$(COLDHOOK_RUNTIME_DIR)
+    -L"$(COLDHOOK_RUNTIME_DIR)" -lcoldhook
 @@PROJECTNAME@@_FRAMEWORKS = Foundation
 
 include $(THEOS)/makefiles/tweak.mk

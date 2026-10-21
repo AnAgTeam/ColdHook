@@ -4,10 +4,12 @@ import os, subprocess, sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
+from coldhook.toolchain import ensure_merger
+
 ROOT = HERE.parents[1]
 BUILD = HERE / "build" / "logos_shared"
 PREPASS = ROOT / "coldhook/logos_prepass.py"
-MERGER = os.environ.get("COLDHOOK_MERGER") or ROOT / "vendor/MachOMerger/.build/release/MachOMerger"
+MERGER = ensure_merger()
 INCLUDE = ROOT / "coldhook/include"
 THEOS = Path(os.environ.get("THEOS", Path.home() / "theos"))
 LOGOS = THEOS / "bin/logos.pl"
