@@ -6,10 +6,11 @@ import subprocess
 import sys
 
 
+from coldhook.toolchain import ensure_merger
+
 ROOT = Path(__file__).resolve().parents[2]
 BUILD = ROOT / "tests/macos/build/shared_scope"
-MERGER = Path(os.environ.get("COLDHOOK_MERGER") or
-              ROOT / "vendor/MachOMerger/.build/release/MachOMerger")
+MERGER = Path(ensure_merger())
 INCLUDE = ROOT / "coldhook/include"
 
 

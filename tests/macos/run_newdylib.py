@@ -10,8 +10,10 @@ import subprocess
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+from coldhook.toolchain import ensure_merger
+
 ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))
-MERGER = os.environ.get("COLDHOOK_MERGER") or os.path.join(ROOT, "vendor", "MachOMerger", ".build", "release", "MachOMerger")
+MERGER = ensure_merger()
 BUILD = os.path.join(HERE, "build", "newdylib")
 SPLIT = ["-Wl,-fixup_chains", "-Xlinker", "-add_split_seg_info"]
 CY, RD, GR, RST = "\033[1;36m", "\033[1;31m", "\033[1;32m", "\033[0m"

@@ -13,13 +13,15 @@ install Theos, Logos, or the Python package. The `coldhook-logos` prepass is the
 automatically by `make`.
 
 The hook dylib must link the universal bootstrap runtime. Set its location before
-building (the default is `/usr/local/lib`):
+building (the default is the generated project directory):
 
 ```bash
 make COLDHOOK_RUNTIME_DIR=/path/to/runtime
 ```
 
-The directory must contain `libcoldhook.dylib`.
+The directory must contain `libcoldhook.tbd` (included in the template) or
+`libcoldhook.dylib`. Headers and Objective-C support sources are copied into
+the generated project; no path to the ColdHook checkout is embedded.
 
 Supported forms:
 

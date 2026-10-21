@@ -47,7 +47,7 @@ Download these artifacts from a GitHub release:
 - the ColdHook Python package/CLI;
 - `libcoldhook.dylib` for shared mode.
 
-Put `MachOMerger` in `vendor/MachOMerger/.build/release/`, or set the project environment variables to point to it. No local Swift build is required afterwards.
+Place `MachOMerger` (`MachOMerger.exe` on Windows) in the current working directory or on `PATH`, or set `COLDHOOK_MERGER` to its path. No local Swift build is required afterwards.
 
 ### Option 2: build from source
 
@@ -58,6 +58,9 @@ cd vendor/MachOMerger
 swift build -c release
 cd ../..
 ```
+
+After building, set `COLDHOOK_MERGER` to the executable path or add its directory
+to `PATH`. Build outputs are not discovered automatically.
 
 Install the Python package from the checkout root:
 
@@ -241,8 +244,7 @@ Set `NO_COLOR=1` to disable color. Processing commands check LIEF before work
 begins.
 
 Merger search order: explicit `COLDHOOK_MERGER` path (supports `~`), current
-working directory, `PATH`, bundled `bin/`, package directory, then the legacy
-`vendor/MachOMerger/.build/release/` build. An invalid explicit environment
+working directory, then `PATH`. Build and package directories are not searched. An invalid explicit environment
 path fails without fallback. The filename is `MachOMerger.exe` on Windows.
 No source checkout is needed when supplying a binary; no download is performed.
 

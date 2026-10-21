@@ -13,13 +13,14 @@
 Хук B собираем СО split-info (его-то мы контролируем). -headerpad гарантирует запас заголовка,
 как у реальных page-aligned приложений (у крошечных тест-бинарей секции иначе впритык).
 """
+from coldhook.toolchain import ensure_merger
 import os
 import subprocess
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))
-MERGER = os.environ.get("COLDHOOK_MERGER") or os.path.join(ROOT, "vendor", "MachOMerger", ".build", "release", "MachOMerger")
+MERGER = ensure_merger()
 BUILD = os.path.join(HERE, "build", "nosplit")
 SPLIT = ["-Wl,-fixup_chains", "-Xlinker", "-add_split_seg_info"]
 PAD = ["-Wl,-headerpad,0x4000"]

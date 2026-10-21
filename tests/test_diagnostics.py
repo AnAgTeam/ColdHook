@@ -27,11 +27,15 @@ class DiagnosticsTests(unittest.TestCase):
                 self.assertEqual(toolchain.ensure_merger(), str(binary))
 
     def test_path_merger(self):
-        with patch.dict(os.environ, {"COLDHOOK_MERGER": ""}), \
-             patch("shutil.which", return_value="/tools/MachOMerger"), \
-             patch("os.path.isfile", side_effect=lambda p: p == "/tools/MachOMerger"), \
-             patch("os.access", return_value=True):
-            self.assertEqual(toolchain.ensure_merger(), "/tools/MachOMerger")
+        with tempfile.TemporaryDirectory() as tmp:
+            binary = Path(tmp, "tools", toolchain._merger_name)
+            binary.parent.mkdir()
+            binary.write_text("placeholder")
+            binary.chmod(0o755)
+            with patch.dict(os.environ, {"COLDHOOK_MERGER": ""}), \
+                 patch("os.getcwd", return_value=tmp), \
+                 patch("shutil.which", return_value=str(binary)):
+                self.assertEqual(toolchain.ensure_merger(), str(binary))
 
     def test_failed_metadata_preserves_path_and_reason(self):
         with tempfile.TemporaryDirectory() as tmp:
