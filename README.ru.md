@@ -1,4 +1,6 @@
-# ColdHook
+<p align="center">
+  <img src="docs/assets/coldhook-logo.png" alt="ColdHook" width="240">
+</p>
 
 Основная версия: [README.md](README.md).
 
