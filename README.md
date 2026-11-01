@@ -1,4 +1,6 @@
-# ColdHook
+<p align="center">
+  <img src="docs/assets/coldhook-logo.png" alt="ColdHook" width="240">
+</p>
 
 ColdHook statically patches Mach-O binaries for iOS and macOS by merging hook code into the target at build time. It is designed for sideloaded apps, where jailbreak-style runtime patching is unavailable.
 
