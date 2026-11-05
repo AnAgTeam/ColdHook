@@ -28,12 +28,12 @@ void MSHookFunction(void *symbol, void *hook, void **old) {
 }
 
 // Поиск символа в загруженном образе. MS ожидает имя с ведущим '_', dlsym — без.
-void *MSFindSymbol(void *image, const char *name) {
+void *MSFindSymbol(MSImageRef image, const char *name) {
     if (name && name[0] == '_') name++;
-    return dlsym(image ? image : RTLD_DEFAULT, name);
+    return dlsym(image ? (void *)image : RTLD_DEFAULT, name);
 }
 
 // Образ по имени файла — только если уже загружен (RTLD_NOLOAD), как и оригинал.
-void *MSGetImageByName(const char *file) {
-    return dlopen(file, RTLD_NOLOAD | RTLD_NOW);
+MSImageRef MSGetImageByName(const char *file) {
+    return (MSImageRef)dlopen(file, RTLD_NOLOAD | RTLD_NOW);
 }

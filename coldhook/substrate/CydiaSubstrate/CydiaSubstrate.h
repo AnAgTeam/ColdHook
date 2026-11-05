@@ -22,8 +22,9 @@ void MSHookMessageEx(Class _class, SEL _cmd, IMP _hook, IMP *_old);
 // Оставлено как no-op для совместимости линковки, если MSHookFunction где-то остался.
 void MSHookFunction(void *_symbol, void *_hook, void **_old);
 
-void *MSFindSymbol(void *_image, const char *_name);
-void *MSGetImageByName(const char *_file);
+typedef const struct MSImage *MSImageRef;
+void *MSFindSymbol(MSImageRef _image, const char *_name);
+MSImageRef MSGetImageByName(const char *_file);
 
 #ifdef __cplusplus
 }
